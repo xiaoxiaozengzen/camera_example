@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <fstream>
+#include <algorithm>
 
 extern "C" {
 #include "libavformat/avformat.h"
@@ -8,6 +10,10 @@ extern "C" {
 #include "libavutil/avutil.h"
 #include "libavutil/pixdesc.h"
 }
+
+#include <opencv2/opencv.hpp>
+
+void yuv2jpg(std::string yuv_file);
 
 /**
  * @brief This function is used to open a video file and print its metadata.
@@ -30,7 +36,7 @@ extern "C" {
  *     - 可以对解码后的帧进行处理，如显示、保存等。
  */
 int open_fun() {
-    std::string mp4_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/image/video.mp4";
+    std::string mp4_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video.mp4";
 
     /**
      * @brief 封装格式上下文。可以理解为 MP4 文件的容器格式。
@@ -217,6 +223,7 @@ int open_fun() {
             continue;  // 跳过音频流，只处理视频流
         }
         if(packet_count == 1) {
+            std::cout << "------------------Packet count: " << packet_count << std::endl;
             std::cout << "Packet pts: " << packet->pts << std::endl;
             std::cout << "Packet dts: " << packet->dts << std::endl;
             std::cout << "Packet size: " << packet->size << std::endl;
@@ -225,7 +232,6 @@ int open_fun() {
             std::cout << "Packet duration: " << packet->duration << std::endl;
             std::cout << "Packet pos: " << packet->pos << std::endl;
             std::cout << "Packet side_data_elems: " << packet->side_data_elems << std::endl;
-            std::cout << "------------------Packet count: " << packet_count << std::endl;
         }
 
         /**
@@ -273,9 +279,17 @@ int open_fun() {
                 }
             }
             if(frame_count == 1) {
-                // data存储指向图片或者通道的指针
+                /**
+                 * @brief 打印解码后的帧信息
+                 * 
+                 * @note data指向解码后picture的planes数据。
+                 * @note linesize表示每个平面（plane）的行大小，单位是字节。
+                 */
                 std::cout << "Frame data: " << reinterpret_cast<void*>(frame->data[0]) << std::endl;
-                std::cout << "Frame linesize: " << frame->linesize[0] << std::endl;
+                std::cout << "Frame linesize[0]: " << frame->linesize[0] << std::endl;
+                std::cout << "Frame linesize[1]: " << frame->linesize[1] << std::endl;
+                std::cout << "Frame linesize[2]: " << frame->linesize[2] << std::endl;
+                std::cout << "Frame linesize[3]: " << frame->linesize[3] << std::endl;
                 std::cout << "Frame width: " << frame->width << std::endl;
                 std::cout << "Frame height: " << frame->height << std::endl;
                 std::cout << "Frame format: " << frame->format << std::endl;
@@ -302,6 +316,11 @@ int open_fun() {
                 } else {
                     std::cout << "AVPixFmtDescriptor does not have alpha channel." << std::endl;
                 }
+                if(pix_fmt_desc->flags & AV_PIX_FMT_FLAG_RGB) {
+                    std::cout << "AVPixFmtDescriptor is RGB format." << std::endl;
+                } else {
+                    std::cout << "AVPixFmtDescriptor is not RGB format." << std::endl;
+                }
                 /**
                  * @brief AV_PIX_FMT_FLAG_BITSTREAM 表示该像素格式是一个比特流格式，即连续的
                  */
@@ -320,6 +339,47 @@ int open_fun() {
                 } else {
                     std::cout << "AVPixFmtDescriptor is not a planar format." << std::endl;
                 }
+
+                /**
+                 * @brief AVComponentDescriptor 是 FFmpeg 中的一个结构体，表示像素如何被打包的
+                 * 
+                 * 1.如果format还有1或者2个component，那么luma是0
+                 * 2.如果format有3或者4个component
+                 *   - 如果RGB被设置，那么0是R，1是G，2是B
+                 *   - 如果没有RGB被设置，那么0是Y，1是U，2是V
+                 * 
+                 * @note plane 表示该组件所在的平面，可以理解成行
+                 * @note component可以理解为分量，比如 YUV 的 Y、U、V 分量。
+                 */
+                AVComponentDescriptor comp = pix_fmt_desc->comp[0];
+                std::cout << "AVComponentDescriptor plane: " << (uint16_t)comp.plane << std::endl;
+                std::cout << "AVComponentDescriptor step: " << comp.step << std::endl;
+                std::cout << "AVComponentDescriptor depth: " << (uint16_t)comp.depth << std::endl;
+                std::cout << "AVComponentDescriptor offset: " << (uint16_t)comp.offset << std::endl;
+                std::cout << "AVComponentDescriptor shift: " << (uint16_t)comp.shift << std::endl;
+                AVComponentDescriptor comp_u = pix_fmt_desc->comp[1];
+                std::cout << "AVComponentDescriptor plane_u: " << (uint16_t)comp_u.plane << std::endl;
+                std::cout << "AVComponentDescriptor step_u: " << comp_u.step << std::endl;
+                std::cout << "AVComponentDescriptor depth_u: " << (uint16_t)comp_u.depth << std::endl;
+                std::cout << "AVComponentDescriptor offset_u: " << (uint16_t)comp_u.offset << std::endl;
+                std::cout << "AVComponentDescriptor shift_u: " << (uint16_t)comp_u.shift << std::endl;
+
+                /**
+                 * @brief 生成一个yuv的图像
+                 */
+                std::string output_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output";
+                std::string yuv_image_name = "/frame_" + std::to_string(frame_count) + ".yuv";
+                std::string yuv_image_path = output_path + yuv_image_name;
+                std::ofstream yuv_file(yuv_image_path, std::ios::binary);
+                if(!yuv_file) {
+                    std::cerr << "Could not open output file '" << yuv_image_path << "' for writing." << std::endl;
+                } else {
+                    yuv_file.write(reinterpret_cast<const char*>(frame->data[0]), frame->width * frame->height);
+                    yuv_file.write(reinterpret_cast<const char*>(frame->data[1]), frame->width / 2 * frame->height / 2);
+                    yuv_file.write(reinterpret_cast<const char*>(frame->data[2]), frame->width / 2 * frame->height / 2);   
+                }
+                yuv_file.close();
+                yuv2jpg(yuv_image_path);
             }
         }
         
@@ -349,7 +409,7 @@ int open_fun() {
  *        * codec 负责编码和解码具体流中的数据，只处理流中的packet
  */
 int demuxer_example() {
-    std::string mp4_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/image/video.mp4";
+    std::string mp4_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video.mp4";
 
     AVFormatContext *format_context = nullptr;
     format_context = avformat_alloc_context();
@@ -401,6 +461,56 @@ int demuxer_example() {
     avformat_free_context(format_context);
     av_dict_free(&options);
     return 0;
+}
+
+/**
+ * yuv的的一些基础相关信息：
+ * 1. YUV图片直接存储其二进制数据，没有文件头信息。
+ * 2. YUV格式有三大类：
+ *   - planner：平面格式，即先连续存储Y分量，然后是U分量，最后是V分量。注意：是先存储整张图片的Y分量，然后是U分量和V分量。
+ *   - semi-Planar：半平面格式，即Y分量单独存储，U和V分量交叉存储。注意：是先存储整张图片的Y分量，然后是U和V分量交叉存储。
+ *   - packed：打包格式，每个像素点的Y,U,V是连续交错存储的。
+ * 3.YUV码流根据不同的采样格式分为不同的格式，如YUV420、YUV422、YUV444等。
+ *   - 取样是指按照一定的间隔取值，其中的比例表示Y、U、V分别占的比值。
+ *   - YUV444：一个像素点有一个Y分量、一个U分量和一个V分量。即每 4 个 Y 采样，就对应 4 个 Cb 和 4 个 Cr 采样，也就是一个像素占用 8+8+8=24 位
+ *     这种存储方式图像质量最高，但空间占用也最大，空间占用与 RGB 存储时一样。
+ *   - YUV422: 每 4 个 Y 采样，对应 2 个 Cb 和 2 个 Cr 采样，这样在解析时就会有一些像素点只有亮度信息而没有色度信息，
+ *     缺失的色度信息就需要在解析时由相邻的其他色度信息根据一定的算法填充。这种方式下平均一个像素占用空间为 8+4+4=16 位。
+ *   - YUV420: 每 4 个 Y 采样，对应 2 个 U 采样或者 2 个 V 采样，注意其中并不是表示 2 个 U 和 0 个 V。
+ *     该存储格式下，平均每个像素占用空间为 8+4+0=12 位
+ */
+void yuv2jpg(std::string yuv_file) {
+    std::ifstream yuv_stream(yuv_file, std::ios::binary);
+    if(!yuv_stream.is_open()) {
+        std::cerr << "Could not open YUV file: " << yuv_file << std::endl;
+        return;
+    }
+    std::cout << "------ yuv file: " << yuv_file << std::endl;
+    std::string yuv = "yuv";
+    std::string::iterator it = std::find_end(yuv_file.begin(), yuv_file.end(), yuv.begin(), yuv.end());
+    if(it == yuv_file.end()) {
+        std::cerr << "The file is not a YUV file: " << yuv_file << std::endl;
+        return;
+    }
+    std::string jpg_file = yuv_file.substr(0, it - yuv_file.begin() - 1) + ".jpg";
+    std::cout << "------ jpg file: " << jpg_file << std::endl;
+
+    int width = 960;
+    int height = 540;
+    int frame_size = width * height * 3 / 2; // YUV420格式，每个像素点占用1.5个字节
+    
+    std::vector<unsigned char> yuv_data(frame_size);
+    yuv_stream.read(reinterpret_cast<char*>(yuv_data.data()), frame_size);
+    if(yuv_stream.gcount() != frame_size) {
+        std::cerr << "Error reading YUV file: " << yuv_file << std::endl;
+        return;
+    }
+
+    cv::Mat yuv_image(height + height / 2, width, CV_8UC1, yuv_data.data());
+    cv::Mat rgb_image;
+    cv::cvtColor(yuv_image, rgb_image, cv::COLOR_YUV2BGR_I420); // YUV420格式转换为BGR格式
+
+    cv::imwrite(jpg_file, rgb_image);
 }
 
 int main() {

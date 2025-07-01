@@ -7,7 +7,7 @@
 
 int main() {
     std::string root_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example";
-    std::string file_name = root_path + "/image/650.jpeg";
+    std::string file_name = root_path + "/input/650.jpeg";
 
     std::ifstream file(file_name, std::ios::binary);
     if(!file.is_open()) {

@@ -26,7 +26,10 @@ class ExampleConan(ConanFile):
     }
 
     def requirements(self):
+        self.requires("libpng/1.6.44")
+        self.requires("zlib/1.2.13")
         self.requires("ffmpeg/4.3.2")
+        self.requires("opencv/4.5.5@transformer/stable")
 
 
     def generate(self):

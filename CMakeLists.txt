@@ -12,5 +12,5 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 file(GLOB SOURCES "src/*.cpp")
 add_executable(camera_example ${SOURCES})
 
-add_subdirectory(jpeg)
+add_subdirectory(image)
 add_subdirectory(ffmpeg_example)
