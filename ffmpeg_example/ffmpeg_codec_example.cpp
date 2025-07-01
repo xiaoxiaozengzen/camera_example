@@ -13,7 +13,7 @@ extern "C" {
 
 #include <opencv2/opencv.hpp>
 
-void yuv2jpg(std::string yuv_file);
+void yuv2jpg(std::string yuv_file, int width, int height, int frame_size);
 
 /**
  * @brief This function is used to open a video file and print its metadata.
@@ -138,7 +138,7 @@ int open_fun() {
     std::cout << "AVCodecParameters height: " << codecpar->height << std::endl;
     ret = avcodec_parameters_to_context(codec_context, codecpar);
     if(ret < 0) {
-        std::cerr << "Could not copy codec parameters to context, because: " << AVERROR(ret) << std::endl;
+        std::cerr << "Could not copy codec parameters to context, because: " << AVERROR(ENOMEM) << std::endl;
         avcodec_free_context(&codec_context);
         avformat_close_input(&format_context);
         avformat_free_context(format_context);
@@ -170,7 +170,7 @@ int open_fun() {
      */
     ret = avcodec_open2(codec_context, codec, nullptr);
     if(ret < 0) {
-        std::cerr << "Could not open codec, because: " << AVERROR(ret) << std::endl;
+        std::cerr << "Could not open codec, because: " << AVERROR(ENOMEM) << std::endl;
         avcodec_free_context(&codec_context);
         avformat_close_input(&format_context);
         avformat_free_context(format_context);
@@ -216,7 +216,7 @@ int open_fun() {
          */
         ret = av_read_frame(format_context, packet);
         if(ret < 0) {
-            std::cerr << "Could not read frame from input file, because: " << AVERROR(ret) << std::endl;
+            std::cerr << "Could not read frame from input file, because: " << AVERROR(ENOMEM) << std::endl;
             break;
         }
         if(packet->stream_index == 1) {
@@ -246,7 +246,7 @@ int open_fun() {
          */
         ret = avcodec_send_packet(codec_context, packet);
         if(ret < 0) {
-            std::cerr << "Could not send packet to decoder, because: " << AVERROR(ret) << std::endl;
+            std::cerr << "Could not send packet to decoder, because: " << AVERROR(ENOMEM) << std::endl;
             break;
         }
 
@@ -255,8 +255,6 @@ int open_fun() {
         packet_count++;
 
         while(true) {
-            frame_count++;
-
             /**
              * int avcodec_receive_frame(AVCodecContext *avctx, AVFrame *frame);
              * 
@@ -274,16 +272,19 @@ int open_fun() {
                     // EAGAIN 表示没有更多的帧可供解码，EOF 表示到达了文件末尾
                     break;
                 } else {
-                    std::cerr << "Could not receive frame from decoder, because: " << AVERROR(ret) << std::endl;
+                    std::cerr << "Could not receive frame from decoder, because: " << AVERROR(ENOMEM) << std::endl;
                     break;
                 }
             }
+            frame_count++;
             if(frame_count == 1) {
                 /**
                  * @brief 打印解码后的帧信息
                  * 
                  * @note data指向解码后picture的planes数据。
                  * @note linesize表示每个平面（plane）的行大小，单位是字节。
+                 * @note linesize会进行对齐处理，通常是16/32/64的倍数。因此会出现lensize=1024，但是width=960的情况。
+                 *       此时需要将对齐部分的字节进行忽略，即每行的后1024-960=64字节不需要处理。
                  */
                 std::cout << "Frame data: " << reinterpret_cast<void*>(frame->data[0]) << std::endl;
                 std::cout << "Frame linesize[0]: " << frame->linesize[0] << std::endl;
@@ -374,12 +375,18 @@ int open_fun() {
                 if(!yuv_file) {
                     std::cerr << "Could not open output file '" << yuv_image_path << "' for writing." << std::endl;
                 } else {
-                    yuv_file.write(reinterpret_cast<const char*>(frame->data[0]), frame->width * frame->height);
-                    yuv_file.write(reinterpret_cast<const char*>(frame->data[1]), frame->width / 2 * frame->height / 2);
-                    yuv_file.write(reinterpret_cast<const char*>(frame->data[2]), frame->width / 2 * frame->height / 2);   
+                    for(int i = 0; i < frame->height; ++i) {
+                        yuv_file.write(reinterpret_cast<const char*>(frame->data[0] + i * frame->linesize[0]), frame->width);
+                    }
+                    for(int i = 0; i < frame->height / 2; ++i) {
+                        yuv_file.write(reinterpret_cast<const char*>(frame->data[1] + i * frame->linesize[1]), frame->width / 2);
+                    }
+                    for(int i = 0; i < frame->height / 2; ++i) {
+                        yuv_file.write(reinterpret_cast<const char*>(frame->data[2] + i * frame->linesize[2]), frame->width / 2);
+                    }
                 }
                 yuv_file.close();
-                yuv2jpg(yuv_image_path);
+                yuv2jpg(yuv_image_path, frame->width, frame->height, frame->width * frame->height);
             }
         }
         
@@ -478,8 +485,9 @@ int demuxer_example() {
  *     缺失的色度信息就需要在解析时由相邻的其他色度信息根据一定的算法填充。这种方式下平均一个像素占用空间为 8+4+4=16 位。
  *   - YUV420: 每 4 个 Y 采样，对应 2 个 U 采样或者 2 个 V 采样，注意其中并不是表示 2 个 U 和 0 个 V。
  *     该存储格式下，平均每个像素占用空间为 8+4+0=12 位
+ *     这种存储方式水平和垂直方向上U和V分量的采样率都是Y分量的一半，因此每个像素点的色度信息是由周围的像素点的色度信息计算得到的。
  */
-void yuv2jpg(std::string yuv_file) {
+void yuv2jpg(std::string yuv_file, int width, int height, int frame_size) {
     std::ifstream yuv_stream(yuv_file, std::ios::binary);
     if(!yuv_stream.is_open()) {
         std::cerr << "Could not open YUV file: " << yuv_file << std::endl;
@@ -494,10 +502,6 @@ void yuv2jpg(std::string yuv_file) {
     }
     std::string jpg_file = yuv_file.substr(0, it - yuv_file.begin() - 1) + ".jpg";
     std::cout << "------ jpg file: " << jpg_file << std::endl;
-
-    int width = 960;
-    int height = 540;
-    int frame_size = width * height * 3 / 2; // YUV420格式，每个像素点占用1.5个字节
     
     std::vector<unsigned char> yuv_data(frame_size);
     yuv_stream.read(reinterpret_cast<char*>(yuv_data.data()), frame_size);
@@ -518,5 +522,10 @@ int main() {
     open_fun();
     std::cout << "============================  demuxer_example ====================== " << std::endl;
     demuxer_example();
+    std::cout << "============================  yuv2jpg ====================== " << std::endl;
+    std::string yuv_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p.yuv";
+    yuv2jpg(yuv_file, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
+    std::string yuv_file2 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame.yuv";
+    yuv2jpg(yuv_file2, 960, 540, 960 * 540 * 3 / 2); // YUV420P格式
     return 0;
 }
