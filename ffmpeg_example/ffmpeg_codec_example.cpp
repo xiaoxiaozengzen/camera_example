@@ -122,7 +122,13 @@ int open_fun() {
     /**
      * @brief AVCodecParameters 是 FFmpeg 中的一个结构体，表示编解码器参数。
      * 
-     * codecpar 包含了编解码器的各种参数，如编码格式、分辨率、比特率等。
+     * @note codecpar 包含了编解码器的各种参数，如编码格式、分辨率、比特率等。
+     * @note 其中codec_type:
+     *       - AVMEDIA_TYPE_VIDEO: 表示视频流，值为 0。
+     *       - AVMEDIA_TYPE_AUDIO: 表示音频流，值为 1
+     *       - AVMEDIA_TYPE_SUBTITLE: 表示字幕流，值为 2。
+     *       - AVMEDIA_TYPE_DATA: 表示数据流，值为 3。
+     *       - AVMEDIA_TYPE_ATTACHMENT: 表示附件流，值为 4。
      */
     AVCodecParameters *codecpar = format_context->streams[0]->codecpar;
     std::cout << "AVCodecParameters codec_type: " << av_get_media_type_string(codecpar->codec_type) << std::endl;
@@ -156,6 +162,19 @@ int open_fun() {
     }
     std::cout << "AVCodec name: " << codec->name << std::endl;
     std::cout << "AVCodec long name: " << codec->long_name << std::endl;
+    std::cout << "AVCodec type: " << av_get_media_type_string(codec->type) << std::endl;
+    std::cout << "AVCodec id: " << avcodec_get_name(codec->id) << std::endl;
+    std::cout << "AVCodec capabilities: " << codec->capabilities << std::endl;
+    std::cout << "AVCodec max lowres: " << codec->max_lowres << std::endl;
+    /**
+     * struct AVProfile {
+     *   int profile;          // 编码器的配置文件
+     *   const char *name;    // 编码器配置文件的名称
+     * }
+     */
+    std::cout << "AVCodec profile = " << codec->profiles[0].profile
+              << "AVCodec name = " << codec->profiles[0].name
+              << std::endl;
 
     /**
      * int avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictionary **options);
@@ -214,7 +233,17 @@ int open_fun() {
          */
         ret = av_read_frame(format_context, packet);
         if(ret < 0) {
-            std::cerr << "Could not read frame from input file, because: " << AVERROR(ENOMEM) << std::endl;
+            if(ret == AVERROR_EOF) {
+                // 到达文件末尾
+                std::cout << "av_read_frame: End of file reached." << std::endl;
+                break;
+            } else if(ret == AVERROR(EAGAIN)) {
+                // 没有更多的包可供读取
+                std::cout << "av_read_frame: No more packets to read." << std::endl;
+                break;
+            }
+            // 其他错误
+            std::cerr << "av_read_frame: Could not read frame from input file, because: " << AVERROR(ENOMEM) << std::endl;
             break;
         }
         if(packet->stream_index == 1) {
@@ -227,9 +256,9 @@ int open_fun() {
             std::cout << "Packet size: " << packet->size << std::endl;
             std::cout << "Packet stream index: " << packet->stream_index << std::endl;
             std::cout << "Packet flags: " << packet->flags << std::endl;
+            std::cout << "Packet side_data_elems: " << packet->side_data_elems << std::endl;
             std::cout << "Packet duration: " << packet->duration << std::endl;
             std::cout << "Packet pos: " << packet->pos << std::endl;
-            std::cout << "Packet side_data_elems: " << packet->side_data_elems << std::endl;
         }
 
         /**
@@ -376,21 +405,15 @@ int open_fun() {
                     for(int i = 0; i < frame->height; ++i) {
                         yuv_file.write(reinterpret_cast<const char*>(frame->data[0] + i * frame->linesize[0]), frame->width);
                     }
-                    std::vector<unsigned char> zero_data(frame->width / 2, 128);
                     for(int i = 0; i < frame->height / 2; ++i) {
-                        yuv_file.write(reinterpret_cast<const char*>(zero_data.data()), frame->width / 2);
+                        yuv_file.write(reinterpret_cast<const char*>(frame->data[1] + i * frame->linesize[1]), frame->width / 2);
                     }
                     for(int i = 0; i < frame->height / 2; ++i) {
-                        yuv_file.write(reinterpret_cast<const char*>(zero_data.data()), frame->width / 2);
+                        yuv_file.write(reinterpret_cast<const char*>(frame->data[2] + i * frame->linesize[2]), frame->width / 2);
                     }
-                    // for(int i = 0; i < frame->height / 2; ++i) {
-                    //     yuv_file.write(reinterpret_cast<const char*>(frame->data[1] + i * frame->linesize[1]), frame->width / 2);
-                    // }
-                    // for(int i = 0; i < frame->height / 2; ++i) {
-                    //     yuv_file.write(reinterpret_cast<const char*>(frame->data[2] + i * frame->linesize[2]), frame->width / 2);
-                    // }
                 }
                 yuv_file.close();
+                av_frame_unref(frame);
             }
         }
         
@@ -399,10 +422,11 @@ int open_fun() {
     std::cout << "Total packets read: " << packet_count << std::endl;
     std::cout << "Total frames decoded: " << frame_count << std::endl;
 
-    // 关闭 AVPacket
-    av_packet_free(&packet);
+
     // 释放 AVFrame
     av_frame_free(&frame);
+    // 关闭 AVPacket
+    av_packet_free(&packet);
     // 关闭解码器
     avcodec_free_context(&codec_context);
     // 关闭输入文件

@@ -168,7 +168,8 @@ int main() {
     yuv2jpg(yuv_file5, 960, 540, 960 * 540 * 3 / 2); // YUV420P格式
     std::string yuv_gray_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame_gray.yuv";
     yuv2jpg(yuv_gray_file, 960, 540, 960 * 540 * 3 /2); // YUV灰度格式
-
+    std::string yuv_file6 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frame_1.yuv";
+    yuv2jpg(yuv_file6, 960, 540, 960 * 540 * 3 /2); // YUV灰度格式
 
     return 0;
 }
