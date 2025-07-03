@@ -9,6 +9,7 @@ extern "C" {
 #include "libavutil/pixfmt.h"
 #include "libavutil/avutil.h"
 #include "libavutil/pixdesc.h"
+#include "libavutil/opt.h"
 }
 
 #include <opencv2/opencv.hpp>
@@ -33,7 +34,7 @@ extern "C" {
  *   5.处理解码后的帧
  *     - 可以对解码后的帧进行处理，如显示、保存等。
  */
-int open_fun() {
+int decode_fun() {
     std::string mp4_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video.mp4";
 
     /**
@@ -63,17 +64,33 @@ int open_fun() {
         return -1;
     }
 
-    std::string url(format_context->url);
-    std::int32_t start_time = format_context->start_time;
-    std::int64_t duration = format_context->duration;
-    std::uint32_t nb_streams = format_context->nb_streams;
-    std::uint64_t bit_rate = format_context->bit_rate;
-    std::string iformat_name(format_context->iformat->name);
-    std::string iformat_long_name(format_context->iformat->long_name);
+    /**
+     * AVClass
+     */
+    std::cout << "AVClass name: " << format_context->av_class->class_name << std::endl;
+    std::cout << "AVClass version: " << format_context->av_class->version << std::endl;
 
-    std::cout << "AVFormatContex url: " << url << std::endl;
+    /**
+     * AVOption
+     */
+    std::cout << "AVOption name: " << format_context->av_class->option->name << std::endl;
+
+    /**
+     * AVInputFormat
+     */
+    std::cout << "AVInputFormat name: " << format_context->iformat->name << std::endl;
+    std::cout << "AVInputFormat long_name: " << format_context->iformat->long_name << std::endl;
+    std::cout << "AVInputFormat flags: " << format_context->iformat->flags << std::endl;
+    if(format_context->iformat->extensions) {
+        std::cout << "AVInputFormat extensions: " << format_context->iformat->extensions << std::endl;
+    }
+
+    /**
+     * @brief AVFormatContext 是 FFmpeg 中的一个结构体，表示多媒体文件的格式上下文。
+     */
+    std::cout << "AVFormatContex url: " << format_context->url << std::endl;
     std::cout << "AVFormatContex AV_NOPTS_VALUE: " << AV_NOPTS_VALUE << std::endl;  // 表示无法正确获取数据
-    std::cout << "AVFormatContex start_time: " << start_time << std::endl;
+    std::cout << "AVFormatContex start_time: " << format_context->start_time << std::endl;
     std::cout << "AVFormatContex AV_TIME_BASE: " << AV_TIME_BASE << std::endl;
 
     /**
@@ -81,9 +98,9 @@ int open_fun() {
      * FFmpeg 从 mp4 里面的 duration读取的
      * MP4 标准定义 mvhd 里面的 duration 以最长的流为准，这个 duration 可能是音频流的时长，也可能是视频流的时长。
      */
-    std::cout << "AVFormatContex duration: " << duration / double(AV_TIME_BASE) << std::endl;
-    std::cout << "AVFormatContex nb_streams: " << nb_streams << std::endl;
-    for(std::size_t i = 0; i < nb_streams; ++i) {
+    std::cout << "AVFormatContex duration: " << format_context->duration / AV_TIME_BASE << " s" << std::endl;
+    std::cout << "AVFormatContex nb_streams: " << format_context->nb_streams << std::endl;
+    for(std::size_t i = 0; i < format_context->nb_streams; ++i) {
         /**
          * @brief AVStream 是 FFmpeg 中的一个结构体，表示多媒体流（如音频或视频流）。
          */
@@ -92,6 +109,7 @@ int open_fun() {
             std::cout << "Stream " << i 
                       << ": index: " << stream->index
                       << ", id: " << stream->id
+                      << ". time_base: " << stream->time_base.num << "/" << stream->time_base.den
                       << ", start_time: " << stream->start_time
                       << ", duration: " << stream->duration
                       << ", nb_frames: " << stream->nb_frames
@@ -102,9 +120,9 @@ int open_fun() {
                       << std::endl;
         }
     }
-    std::cout << "AVFormatContex bit_rate: " << bit_rate / 1000 << " kbps" << std::endl;
-    std::cout << "AVFormatContex iformat_name: " << iformat_name << std::endl;
-    std::cout << "AVFormatContex iformat_long_name: " << iformat_long_name << std::endl;
+    std::cout << "AVFormatContex bit_rate: " << format_context->bit_rate / 1000 << " kbps" << std::endl;
+    std::cout << "AVFormatContex iformat_name: " << format_context->iformat->name << std::endl;
+    std::cout << "AVFormatContex iformat_long_name: " << format_context->iformat->long_name << std::endl;
 
 
     /**
@@ -148,6 +166,23 @@ int open_fun() {
         avformat_free_context(format_context);
         return -1;
     }
+
+    /**
+     * AVCodecContext
+     */
+    std::cout << "AVCodecContext codec_type: " << av_get_media_type_string(codec_context->codec_type) << std::endl;
+    std::cout << "AVCodecContext codec_id: " << avcodec_get_name(codec_context->codec_id) << std::endl;
+    std::cout << "AVCodecContext codec_tag: " << codec_context->codec_tag << std::endl;
+    std::cout << "AVCodecContext bit_rate: " << codec_context->bit_rate / 1000 << " kbps" << std::endl;
+    std::cout << "AVCodecContext time_base: " << codec_context->time_base.num << "/" << codec_context->time_base.den << std::endl;
+    std::cout << "AVCodecContext framerate: " << codec_context->framerate.num << "/" << codec_context->framerate.den << std::endl;
+    std::cout << "AVCodecContext delay: " << codec_context->delay << std::endl;
+    std::cout << "AVCodecContext width: " << codec_context->width << std::endl;
+    std::cout << "AVCodecContext height: " << codec_context->height << std::endl;
+    std::cout << "AVCodecContext coded_width: " << codec_context->coded_width << std::endl;
+    std::cout << "AVCodecContext coded_height: " << codec_context->coded_height << std::endl;
+    std::cout << "AVCodecContext has_b_frames: " << codec_context->has_b_frames << std::endl;
+    std::cout << "AVCodecContext sample_aspect_ratio: " << codec_context->sample_aspect_ratio.num << "/" << codec_context->sample_aspect_ratio.den << std::endl;
 
     /**
      * @brief AVCodec 是 FFmpeg 中的一个结构体，表示编解码器。
@@ -320,13 +355,40 @@ int open_fun() {
                 std::cout << "Frame linesize[3]: " << frame->linesize[3] << std::endl;
                 std::cout << "Frame width: " << frame->width << std::endl;
                 std::cout << "Frame height: " << frame->height << std::endl;
-                std::cout << "Frame format: " << frame->format << std::endl;
+                std::cout << "Frame nb_samples: " << frame->nb_samples << std::endl;
+                std::cout << "Frame format: " << av_get_pix_fmt_name((AVPixelFormat)frame->format) << std::endl;
                 std::cout << "Frame picture_type: " << av_get_picture_type_char(frame->pict_type) << std::endl;
+                /**
+                 * @brief sample_aspect_ratio 简称 SAR，表示显示的时候单个像素的宽高比。
+                 * @note 例如：存储时一张720*576的视频帧，文件中就是720列576行的像素数据。
+                 *       但是显示时，如果设置SAR为16:15，那么每个像素的宽度是高度的16/15，也就是扁的
+                 *       播放器拿到SAR后，会根据SAR和分辨率来计算实际的显示宽高比(DAR, Display Aspect Ratio)。
+                 *       显示时，播放器会将每个像素的宽度和高度进行缩放，以适应显示设备的宽高比。
+                 *       则实际显示的时候，视频的宽度会变成 720 * (16/15) = 768，实际高度不变为576。
+                 */
+                std::cout << "Frame sample_aspect_ratio: " 
+                          << frame->sample_aspect_ratio.num << "/" 
+                          << frame->sample_aspect_ratio.den << std::endl;
                 std::cout << "Frame pts: " << frame->pts << std::endl;
                 std::cout << "Frame pkt_dts: " << frame->pkt_dts << std::endl;
                 std::cout << "Frame quality: " << frame->quality << std::endl;
+                /**
+                 * @brief repeat_pict 表示帧的重复次数。
+                 * @note 在视频编码中，某些帧可能会被重复显示多次，以实现更平滑的播放效果。
+                 *       repeat_pict的单位是半帧
+                 * @note 对于逐行扫描的视频，repeat_pict的值通常为0
+                 *       对于隔行扫描的视频，repeat_pict的值通常为1，表示改帧需要显示1.5帧的时间
+                 */
                 std::cout << "Frame repeat_pict: " << frame->repeat_pict << std::endl;
                 std::cout << "Frame color_range: " << frame->color_range << std::endl;
+                /**
+                 * @brief crop_top、crop_bottom、crop_left、crop_right 表示裁剪区域的大小。
+                 * @note 表示改帧在显示的时候应从顶部、底部、左侧和右侧裁剪多少像素。
+                 */
+                std::cout << "Frame crop_top: " << frame->crop_top << std::endl;
+                std::cout << "Frame crop_bottom: " << frame->crop_bottom << std::endl;
+                std::cout << "Frame crop_left: " << frame->crop_left << std::endl;
+                std::cout << "Frame crop_right: " << frame->crop_right << std::endl;
 
                 /**
                  * format == 0，这是 YUV420P 格式
@@ -428,6 +490,8 @@ int open_fun() {
     // 关闭 AVPacket
     av_packet_free(&packet);
     // 关闭解码器
+    avcodec_close(codec_context);
+    // 关闭解码器
     avcodec_free_context(&codec_context);
     // 关闭输入文件
     avformat_close_input(&format_context);
@@ -501,8 +565,8 @@ int demuxer_example() {
 
 
 int main() {
-    std::cout << "============================  open_fun ====================== " << std::endl;
-    open_fun();
+    std::cout << "============================  decode_fun ====================== " << std::endl;
+    decode_fun();
     std::cout << "============================  demuxer_example ====================== " << std::endl;
     demuxer_example();
 
