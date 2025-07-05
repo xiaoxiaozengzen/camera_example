@@ -15,6 +15,27 @@ extern "C" {
 #include <opencv2/opencv.hpp>
 
 
+/**
+ * yuv转换为mp4的流程：
+ * 1.avformat_alloc_output_context2：创建一个输出格式上下文，用于封装 MP4 文件。
+ * 2.avformat_new_stream：在格式上下文中添加一个视频流。
+ * 3.avcodec_find_encoder：查找 H.264 编码器。
+ * 4.avcodec_alloc_context3：基于查找到的编码器，为编码器分配一个上下文。
+ * 5.avcodec_parameters_from_context：将编码器上下文的参数复制到视频流的编解码参数中。
+ * 6.avcodec_open2：将编码器跟编码器上下文关联起来，准备编码。
+ * 7.avio_open2：打开输出文件的 I/O 上下文，以便写入 MP4 文件。
+ * 8.avformat_write_header：写入 MP4 文件的头部信息。
+ * 9.循环操作：
+ *   - 填充 AVFrame 的数据，通常是从 YUV 图像文件中读取数据。
+ *   - av_frame_get_buffer：为 AVFrame 分配内存缓冲区，以存储编码后的数据。
+ *   - avcodec_send_frame：将 AVFrame 发送到编码器进行编码。
+ *   - avcodec_receive_packet：从编码器接收编码后的数据包。
+ *   - av_packet_rescale_ts：将数据包的时间戳从编码器上下文的时间基准转换为视频流的时间基准。
+ *   - av_interleaved_write_frame：将编码后的数据包写入 MP4 文件。
+ *   - av_packet_unref：释放 AVPacket，准备下一次编码。
+ * 10.循环结束后，调用 av_write_trailer 写入 MP4 文件的尾部信息。
+ * 11.释放资源：关闭编码器、释放 AVFrame 和 AVPacket、关闭输出文件的 I/O 上下文、释放格式上下文等。
+ */
 int encode_fun() {
     int ret = 0;
 
@@ -240,8 +261,23 @@ int encode_fun() {
             std::cout << "packet_count: " << packet_count << std::endl;
 
             packet->stream_index = video_stream->index; // 设置数据包的流索引
+
+            /**
+             * @brief 将AVPacket中的时间戳pts和dts从编码器的时间基准转换为流的时间基准。
+             * @note 不同的上下文的时基可能不一样，入编码器和输出流的time_base可能不一样。
+             * @note 写入文件时，需要爸packet的时间戳从编码器的时基转换为流的时基。保证播放器能正确解码和播放视频。
+             * 
+             * @note 必须在调用av_interleaved_write_frame()之前调用av_packet_rescale_ts()函数，
+             *       否则写入的时间戳可能不正确，导致视频播放时出现问题。
+             *       例如：如果编码器的时间基准是1/4秒，而流的时间基准是1/24秒，
+             *       那么需要将编码器的时间戳从1/4秒转换为1/24秒，
+             *       否则播放器可能会将视频播放得过快或过慢。
+             */
             av_packet_rescale_ts(packet, codec_context->time_base, video_stream->time_base); // 重采样时间戳
             
+            /**
+             * @brief 将编码后的AVPacket写入输出文件。并自动处理多路流
+             */
             ret = av_interleaved_write_frame(format_context, packet);
             if(ret < 0) {
                 std::cerr << "Error writing packet to output file, because: " << AVERROR(ENOMEM) << std::endl;
