@@ -34,7 +34,7 @@ int encode_fun() {
      * 2.添加一个视频流到格式上下文中。
      */
     AVStream *video_stream = avformat_new_stream(format_context, nullptr);
-    video_stream->time_base = {1, 1000000}; // 设置时间基准为1/24秒
+    video_stream->time_base = {1, 24}; // 设置时间基准为1/24秒
 
     /**
      * 3.创建编码器的上下文。
@@ -66,11 +66,11 @@ int encode_fun() {
      *       - FF_PROFILE_H264_SCALABLE_HIGH: 可伸缩高配置，适用于可伸缩视频编码。
      */
     codec_context->profile = FF_PROFILE_H264_HIGH;
-    codec_context->time_base = {1, 1000000};
+    codec_context->time_base = {1, 24};
     codec_context->width = 960; // 视频宽度
     codec_context->height = 540; // 视频高度
     codec_context->pix_fmt = AV_PIX_FMT_YUV420P; // 设置像素格式为YUV420P
-    codec_context->sample_aspect_ratio = {0, 1}; // 设置采样宽高比
+    codec_context->sample_aspect_ratio = {1, 1}; // 设置采样宽高比
     /**
      * @brief 色彩范围
      * @note 色彩范围用于指定视频的色彩空间和色彩范围。
@@ -265,6 +265,8 @@ int encode_fun() {
     avcodec_free_context(&codec_context);
 
     // 必须调用av_write_trailer()来写入文件尾部信息。要不然可能写入的文件不完整。
+    av_write_trailer(format_context);
+    
     avio_closep(&format_context->pb);
     avformat_free_context(format_context);
 
