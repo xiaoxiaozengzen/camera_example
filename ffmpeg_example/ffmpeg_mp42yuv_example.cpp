@@ -106,7 +106,7 @@ int decode_fun() {
          */
         AVStream *stream = format_context->streams[i];
         if(stream) {
-            std::cout << "Stream " << i 
+            std::cout << "AVStream " << i 
                       << ": index: " << stream->index
                       << ", id: " << stream->id
                       << ". time_base: " << stream->time_base.num << "/" << stream->time_base.den
@@ -286,14 +286,14 @@ int decode_fun() {
         }
         if(packet_count == 1) {
             std::cout << "------------------Packet count: " << packet_count << std::endl;
-            std::cout << "Packet pts: " << packet->pts << std::endl;
-            std::cout << "Packet dts: " << packet->dts << std::endl;
-            std::cout << "Packet size: " << packet->size << std::endl;
-            std::cout << "Packet stream index: " << packet->stream_index << std::endl;
-            std::cout << "Packet flags: " << packet->flags << std::endl;
-            std::cout << "Packet side_data_elems: " << packet->side_data_elems << std::endl;
-            std::cout << "Packet duration: " << packet->duration << std::endl;
-            std::cout << "Packet pos: " << packet->pos << std::endl;
+            std::cout << "AVPacket pts: " << packet->pts << std::endl;
+            std::cout << "AVPacket dts: " << packet->dts << std::endl;
+            std::cout << "AVPacket size: " << packet->size << std::endl;
+            std::cout << "AVPacket stream index: " << packet->stream_index << std::endl;
+            std::cout << "AVPacket flags: " << packet->flags << std::endl;
+            std::cout << "AVPacket side_data_elems: " << packet->side_data_elems << std::endl;
+            std::cout << "AVPacket duration: " << packet->duration << std::endl;
+            std::cout << "AVPacket pos: " << packet->pos << std::endl;
         }
 
         /**
@@ -348,16 +348,16 @@ int decode_fun() {
                  * @note linesize会进行对齐处理，通常是16/32/64的倍数。因此会出现lensize=1024，但是width=960的情况。
                  *       此时需要将对齐部分的字节进行忽略，即每行的后1024-960=64字节不需要处理。
                  */
-                std::cout << "Frame data: " << reinterpret_cast<void*>(frame->data[0]) << std::endl;
-                std::cout << "Frame linesize[0]: " << frame->linesize[0] << std::endl;
-                std::cout << "Frame linesize[1]: " << frame->linesize[1] << std::endl;
-                std::cout << "Frame linesize[2]: " << frame->linesize[2] << std::endl;
-                std::cout << "Frame linesize[3]: " << frame->linesize[3] << std::endl;
-                std::cout << "Frame width: " << frame->width << std::endl;
-                std::cout << "Frame height: " << frame->height << std::endl;
-                std::cout << "Frame nb_samples: " << frame->nb_samples << std::endl;
-                std::cout << "Frame format: " << av_get_pix_fmt_name((AVPixelFormat)frame->format) << std::endl;
-                std::cout << "Frame picture_type: " << av_get_picture_type_char(frame->pict_type) << std::endl;
+                std::cout << "AVFrame data: " << reinterpret_cast<void*>(frame->data[0]) << std::endl;
+                std::cout << "AVFrame linesize[0]: " << frame->linesize[0] << std::endl;
+                std::cout << "AVFrame linesize[1]: " << frame->linesize[1] << std::endl;
+                std::cout << "AVFrame linesize[2]: " << frame->linesize[2] << std::endl;
+                std::cout << "AVFrame linesize[3]: " << frame->linesize[3] << std::endl;
+                std::cout << "AVFrame width: " << frame->width << std::endl;
+                std::cout << "AVFrame height: " << frame->height << std::endl;
+                std::cout << "AVFrame nb_samples: " << frame->nb_samples << std::endl;
+                std::cout << "AVFrame format: " << av_get_pix_fmt_name((AVPixelFormat)frame->format) << std::endl;
+                std::cout << "AVFrame picture_type: " << av_get_picture_type_char(frame->pict_type) << std::endl;
                 /**
                  * @brief sample_aspect_ratio 简称 SAR，表示显示的时候单个像素的宽高比。
                  * @note 例如：存储时一张720*576的视频帧，文件中就是720列576行的像素数据。
@@ -366,12 +366,12 @@ int decode_fun() {
                  *       显示时，播放器会将每个像素的宽度和高度进行缩放，以适应显示设备的宽高比。
                  *       则实际显示的时候，视频的宽度会变成 720 * (16/15) = 768，实际高度不变为576。
                  */
-                std::cout << "Frame sample_aspect_ratio: " 
+                std::cout << "AVFrame sample_aspect_ratio: " 
                           << frame->sample_aspect_ratio.num << "/" 
                           << frame->sample_aspect_ratio.den << std::endl;
-                std::cout << "Frame pts: " << frame->pts << std::endl;
-                std::cout << "Frame pkt_dts: " << frame->pkt_dts << std::endl;
-                std::cout << "Frame quality: " << frame->quality << std::endl;
+                std::cout << "AVFrame pts: " << frame->pts << std::endl;
+                std::cout << "AVFrame pkt_dts: " << frame->pkt_dts << std::endl;
+                std::cout << "AVFrame quality: " << frame->quality << std::endl;
                 /**
                  * @brief repeat_pict 表示帧的重复次数。
                  * @note 在视频编码中，某些帧可能会被重复显示多次，以实现更平滑的播放效果。
@@ -379,16 +379,16 @@ int decode_fun() {
                  * @note 对于逐行扫描的视频，repeat_pict的值通常为0
                  *       对于隔行扫描的视频，repeat_pict的值通常为1，表示改帧需要显示1.5帧的时间
                  */
-                std::cout << "Frame repeat_pict: " << frame->repeat_pict << std::endl;
-                std::cout << "Frame color_range: " << frame->color_range << std::endl;
+                std::cout << "AVFrame repeat_pict: " << frame->repeat_pict << std::endl;
+                std::cout << "AVFrame color_range: " << frame->color_range << std::endl;
                 /**
                  * @brief crop_top、crop_bottom、crop_left、crop_right 表示裁剪区域的大小。
                  * @note 表示改帧在显示的时候应从顶部、底部、左侧和右侧裁剪多少像素。
                  */
-                std::cout << "Frame crop_top: " << frame->crop_top << std::endl;
-                std::cout << "Frame crop_bottom: " << frame->crop_bottom << std::endl;
-                std::cout << "Frame crop_left: " << frame->crop_left << std::endl;
-                std::cout << "Frame crop_right: " << frame->crop_right << std::endl;
+                std::cout << "AVFrame crop_top: " << frame->crop_top << std::endl;
+                std::cout << "AVFrame crop_bottom: " << frame->crop_bottom << std::endl;
+                std::cout << "AVFrame crop_left: " << frame->crop_left << std::endl;
+                std::cout << "AVFrame crop_right: " << frame->crop_right << std::endl;
 
                 /**
                  * format == 0，这是 YUV420P 格式
