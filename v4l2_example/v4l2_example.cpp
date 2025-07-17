@@ -184,6 +184,33 @@ void VIDIOC_S_FMT_example(int fd) {
                   : "Unknown") << std::endl;
 }
 
+/**
+ * 抓取图片的流程:
+ * 1. 打开视频设备: open("/dev/video0", O_RDWR);
+ * 2. 查询设备能力: VIDIOC_QUERYCAP;
+ * 3. 设置视频格式: VIDIOC_S_FMT;
+ *    * 告诉摄像头你想要的图像格式和分辨率。
+ * 4. 请求缓冲区: VIDIOC_REQBUFS;
+ *    * 向驱动申请一块或多块内存缓冲区，用于存储捕获的图像数据。
+ *    * 这样可以避免每次捕获都进行内存分配，提高效率。
+ * 5. 查询缓冲区并mmap：
+ *    * 使用 VIDIOC_QUERYBUF 查询每个缓冲区的大小和偏移量。
+ *    * 使用 mmap 将缓冲区映射到用户空间，这样可以直接读取图像数据。
+ * 6. 入队缓冲区: VIDIOC_QBUF;
+ *    * 将缓冲区放入驱动的队列中，告诉驱动用这块内存存放采集到的图像数据。
+ * 7. 启动视频流: VIDIOC_STREAMON;
+ *    * 告诉驱动开始捕获图像数据。
+ * 8. 出队缓冲区: VIDIOC_DQBUF;
+ *    * 从驱动的队列中取出已填充的缓冲区。
+ *    * 这时缓冲区中已经包含了摄像头捕获的图像数据
+ *    * 处理完后，记得将缓冲区重新入队，以便驱动继续使用。
+ * 9. 处理图像数据:
+ *    * 可以将图像数据保存为文件，或者进行其他处理。
+ * 10. 释放缓冲区: VIDIOC_STREAMOFF;
+ *     * 停止视频流，释放缓冲区。
+ * 11. 关闭设备: close(fd);
+ *     * 关闭视频设备，释放资源。
+ */
 void capture_picture_example(int fd) {
     /**
      * struct v4l2_requestbuffers {
@@ -307,8 +334,6 @@ int main(int argc, char **argv) {
     VIDIOC_ENUM_FMT_example(fd);
 
     std::cout << "===================== VIDIOC_S_FMT ====================" << std::endl;
-    struct v4l2_format fmt;
-    memset(&fmt, 0, sizeof(fmt));
     VIDIOC_S_FMT_example(fd);
 
     std::cout << "===================== capture picture ====================" << std::endl;
