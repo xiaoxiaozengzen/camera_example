@@ -20,7 +20,9 @@ extern "C" {
  * VIDIOC_G_FMT: 获取当前视频设备的格式。
  */
 
-void VIDIOC_QUERYCAP_example(int fd, struct v4l2_capability *cap) {
+void VIDIOC_QUERYCAP_example(int fd) {
+    struct v4l2_capability cap;
+    memset(&cap, 0, sizeof(cap)); // 清空结构体
     /**
      * struct v4l2_capability {
      *     __u8    driver[16];      // 驱动名称
@@ -37,17 +39,17 @@ void VIDIOC_QUERYCAP_example(int fd, struct v4l2_capability *cap) {
         perror("VIDIOC_QUERYCAP");
         return;
     }
-    std::cout << "Driver: " << cap->driver << std::endl;
-    std::cout << "Card: " << cap->card << std::endl;
-    std::cout << "Bus Info: " << cap->bus_info << std::endl;
-    std::cout << "Version: " << cap->version << std::endl;
+    std::cout << "Driver: " << cap.driver << std::endl;
+    std::cout << "Card: " << cap.card << std::endl;
+    std::cout << "Bus Info: " << cap.bus_info << std::endl;
+    std::cout << "Version: " << cap.version << std::endl;
     /**
      * 设备支持的功能集合：
      *   - V4L2_CAP_VIDEO_CAPTURE: 支持视频采集
      *   - V4L2_CAP_VIDEO_OUTPUT: 支持视频输出
      *   - V4L2_CAP_VIDEO_STREAMING: 支持视频流处理
      */
-    std::cout << "Capabilities: " << std::hex << cap->capabilities << std::dec << std::endl;
+    std::cout << "Capabilities: " << std::hex << cap.capabilities << std::dec << std::endl;
     /**
      * 设备自身的功能集合，用于区分设备本身能力跟驱动能力的区别。
      *   - V4L2_CAP_DEVICE_CAPS: 设备能力
@@ -55,7 +57,7 @@ void VIDIOC_QUERYCAP_example(int fd, struct v4l2_capability *cap) {
      *   - V4L2_CAP_READWRITE: 支持读写操作
      *   - V4L2_CAP_ASYNCIO: 支持异步I/O
      */
-    std::cout << "Device Caps: " << std::hex << cap->device_caps << std::dec << std::endl;
+    std::cout << "Device Caps: " << std::hex << cap.device_caps << std::dec << std::endl;
 }
 
 /**
@@ -327,8 +329,7 @@ int main(int argc, char **argv) {
     }
 
     std::cout << "===================== VIDIOC_QUERYCAP ====================" << std::endl;
-    struct v4l2_capability cap;
-    VIDIOC_QUERYCAP_example(fd, &cap);
+    VIDIOC_QUERYCAP_example(fd);
 
     std::cout << "===================== VIDIOC_ENUM_FMT ====================" << std::endl;
     VIDIOC_ENUM_FMT_example(fd);
