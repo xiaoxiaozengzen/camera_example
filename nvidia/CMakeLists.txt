@@ -1,0 +1,3 @@
+project(nvidia_camera_example)
+
+add_executable(nvidia_camera_example nvidia_image.cpp)

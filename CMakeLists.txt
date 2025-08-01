@@ -14,3 +14,4 @@ add_executable(camera_example ${SOURCES})
 
 add_subdirectory(image)
 add_subdirectory(ffmpeg_example)
+add_subdirectory(nvidia)
