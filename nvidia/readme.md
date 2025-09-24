@@ -17,3 +17,20 @@
 # NvSIPL
 
 NvSIPL: (NVIDIA Sensor Input Processing Library)nvidia drive/jetson平台得相机接口库，用于摄像头得采集、控制、数据流管理
+
+# 术语
+
+NvSCI：(Nvidia Safety Communication Interface)：
+* 主要用于跨进程、跨组件的数据缓冲区域管理和安全通信
+* 提供统一buffer、event、stream等抽象，保证数据流的安全性，隔离性和高效传递
+* 适合多进程/多安全域的数据共享和同步，常用于camera、ISP、DLA、GPU
+* 不直接操作硬件，而是提供数据通道跟内存管理
+
+NVSIPL：
+* 主要用于摄像头、雷达等传感器的采集、控制和数据流管理
+* 封装了sensor驱动、ISP pipeline、帧同步、数据格式等转换功能
+* 直接面向sensor硬件跟ISP
+
+L4T：(Linux For Tegra)
+- 有个专门为Tegra架构设备的linux操作系统，定制的
+- 是为Jetson硬件平台定制
