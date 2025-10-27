@@ -108,6 +108,10 @@ void yuv2gray(std::string yuv_file, int width, int height, int frame_size) {
  *   - YUV420: 每 4 个 Y 采样，对应 2 个 U 采样或者 2 个 V 采样，注意其中并不是表示 2 个 U 和 0 个 V。
  *     该存储格式下，平均每个像素占用空间为 8+4+0=12 位
  *     这种存储方式水平和垂直方向上U和V分量的采样率都是Y分量的一半，因此每个像素点的色度信息是由周围的像素点的色度信息计算得到的。
+ * 4.实际生产中，格式跟采样格式的对应关系如下：
+ *   - YUV420P: YUV的planner格式，采样格式为YUV420，p通常表示planar
+ *   - NV12: YUV的semi-planar格式，采样格式为YUV420，12表示每个像素点平均占用12位。即NV开头的一般是semi-planar格式
+ *   - YUYV422: YUV的packed格式，采样格式为YUV422，YUYV表示存储顺序。不以P结尾的一般是packed格式
  */
 void yuv2jpg(std::string yuv_file, int width, int height, int frame_size) {
     std::ifstream yuv_stream(yuv_file, std::ios::binary);
