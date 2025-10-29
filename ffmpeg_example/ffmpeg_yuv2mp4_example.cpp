@@ -194,11 +194,12 @@ int encode_fun() {
     }
 
     std::string image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output";
-    std::uint32_t frame_count = 0;
+    std::uint32_t frame_count = 1;
     std::uint32_t packet_count = 0;
     while(true) {
         std::stringstream image_name;
-        image_name << std::setw(3) << std::setfill('0') << frame_count;
+        // image_name << std::setw(3) << std::setfill('0') << frame_count;
+        image_name << frame_count;
         std::string image_file = image_path + "/frame_" + image_name.str() + ".yuv";
         std::cout << "=================== Processing image: " << image_file << std::endl;
         std::ifstream yuv_file(image_file, std::ios::binary);
