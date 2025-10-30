@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "libyuv.h"
+
 #include <opencv2/opencv.hpp>
 
 void yuv_info(std::string yuv_file, int width, int height, int frame_size) {
@@ -38,26 +40,25 @@ void yuv_info(std::string yuv_file, int width, int height, int frame_size) {
  * @brief Convert YUV420P format to grayscale YUV format.
  * @note Y值正常写入，U和V分量填充为128。
  */
-void yuv2gray(std::string yuv_file, int width, int height, int frame_size) {
+void yuv2gray(std::string yuv_file_in, std::string yuv_file_out, int width, int height, int frame_size) {
     std::cout << "width: " << width << ", height: " << height << ", frame_size: " << frame_size << std::endl;
 
     // Open the YUV file
-    std::ifstream yuv_stream(yuv_file, std::ios::binary);
+    std::ifstream yuv_stream(yuv_file_in, std::ios::binary);
     if(!yuv_stream.is_open()) {
-        std::cerr << "Could not open YUV file: " << yuv_file << std::endl;
+        std::cerr << "Could not open YUV file: " << yuv_file_in << std::endl;
         return;
     }
 
     // Check if the file is a YUV file by looking for the ".yuv" suffix
     std::string subfix = ".yuv";
-    std::string::size_type pos = yuv_file.find(subfix);
+    std::string::size_type pos = yuv_file_in.find(subfix);
     if(pos == std::string::npos) {
-        std::cerr << "The file is not a YUV file: " << yuv_file << std::endl;
+        std::cerr << "The file is not a YUV file: " << yuv_file_in << std::endl;
         return;
     }
-    std::string file_without_subfix = yuv_file.substr(0, pos);
-    std::cout << "file_without_subfix: " << file_without_subfix << std::endl;
-    std::string gray_yuv_file = file_without_subfix + "_gray.yuv";
+    
+    std::string gray_yuv_file = yuv_file_out;
 
     // Open the gray YUV file
     std::ofstream gray_yuv_stream(gray_yuv_file, std::ios::binary);
@@ -110,10 +111,14 @@ void yuv2gray(std::string yuv_file, int width, int height, int frame_size) {
  *     这种存储方式水平和垂直方向上U和V分量的采样率都是Y分量的一半，因此每个像素点的色度信息是由周围的像素点的色度信息计算得到的。
  * 4.实际生产中，格式跟采样格式的对应关系如下：
  *   - YUV420P: YUV的planner格式，采样格式为YUV420，p通常表示planar
- *   - NV12: YUV的semi-planar格式，采样格式为YUV420，12表示每个像素点平均占用12位。即NV开头的一般是semi-planar格式
+ *     - I420: 又叫YU12，即先存储Y，然后存储U，最后存储V的YUV420P格式
+ *     - YV12: 即先存储Y，然后存储V，最后存储U的YUV420P格式
+ *   - NV12: YUV的semi-planar格式，采样格式为YUV420，即NV开头的一般是semi-planar格式
+ *     - NV12：先存储Y分量，然后交替存储UV分量，U在前
+ *     - NV21：先存储Y分量，然后交替存储VU分量，V在前
  *   - YUYV422: YUV的packed格式，采样格式为YUV422，YUYV表示存储顺序。不以P结尾的一般是packed格式
  */
-void yuv2jpg(std::string yuv_file, int width, int height, int frame_size) {
+void yuv2jpg(std::string yuv_file, std::string jpeg_file, int width, int height, int frame_size) {
     std::ifstream yuv_stream(yuv_file, std::ios::binary);
     if(!yuv_stream.is_open()) {
         std::cerr << "Could not open YUV file: " << yuv_file << std::endl;
@@ -126,7 +131,7 @@ void yuv2jpg(std::string yuv_file, int width, int height, int frame_size) {
         std::cerr << "The file is not a YUV file: " << yuv_file << std::endl;
         return;
     }
-    std::string jpg_file = yuv_file.substr(0, it - yuv_file.begin() - 1) + ".jpg";
+    std::string jpg_file = jpeg_file;
     std::cout << "------ jpg file: " << jpg_file << std::endl;
     
     std::vector<unsigned char> yuv_data(frame_size);
@@ -136,11 +141,91 @@ void yuv2jpg(std::string yuv_file, int width, int height, int frame_size) {
         return;
     }
 
+    /**
+     * 1. 前h行，w宽，是存储Y分量数据，共h*w字节
+     * 2. 后h/2行，w宽，交替存放U和V分量数据，共h*w/2字节
+     *   - 在I420格式中，U和V是分开存储的，先存U平面，然后再存V平面
+     *   - 在I420格式中，U和V。各占h/2行，w/2宽
+     *   - 把他们排列成W宽的单通道图像数据时，需要把每行的宽度扩展为W，则U和V分别占h/4行，w宽
+     */
     cv::Mat yuv_image(height + height / 2, width, CV_8UC1, yuv_data.data());
     cv::Mat rgb_image;
     cv::cvtColor(yuv_image, rgb_image, cv::COLOR_YUV2BGR_I420); // YUV420格式转换为BGR格式
 
     cv::imwrite(jpg_file, rgb_image);
+}
+
+void yuv2rgb(std::string yuv_file, std::string rgb_file, std::string bgr_file, int width, int height, int frame_size) {
+    std::ifstream yuv_stream(yuv_file, std::ios::binary);
+    if(!yuv_stream.is_open()) {
+        std::cerr << "Could not open YUV file: " << yuv_file << std::endl;
+        return;
+    }
+    std::cout << "------ yuv file: " << yuv_file << std::endl;
+    std::string yuv = "yuv";
+    std::string::iterator it = std::find_end(yuv_file.begin(), yuv_file.end(), yuv.begin(), yuv.end());
+    if(it == yuv_file.end()) {
+        std::cerr << "The file is not a YUV file: " << yuv_file << std::endl;
+        return;
+    }
+
+    std::cout << "------ rgb file: " << rgb_file << std::endl;
+    std::cout << "------ bgr file: " << bgr_file << std::endl;
+
+    // Read YUV data
+    std::vector<unsigned char> yuv_data(frame_size);
+    yuv_stream.read(reinterpret_cast<char*>(yuv_data.data()), frame_size);
+    if(yuv_stream.gcount() != frame_size) {
+        std::cerr << "Error reading YUV file: " << yuv_file << std::endl;
+        return;
+    }
+
+    // yuv info
+    uint8_t* yptr = yuv_data.data();
+    uint8_t* uptr = yuv_data.data() + width * height;
+    uint8_t* vptr = uptr + (width / 2) * (height / 2);
+    int y_stride = width;
+    int u_stride = width / 2;
+    int v_stride = width / 2;
+
+    // yuv to rgb using libyuv
+    std::vector<unsigned char> rgb_data(width * height * 3);
+    std::vector<unsigned char> bgr_data(width * height * 3);
+    int rgb_stride = width * 3;
+    // 注意：该函数中，RGB24在内存中的存储是BGR顺序
+    int ret = libyuv::I420ToRGB24(
+        yptr, y_stride,
+        uptr, u_stride,
+        vptr, v_stride,
+        rgb_data.data(), rgb_stride,
+        width, height
+    );
+    if(ret != 0) {
+        std::cerr << "Error converting YUV to RGB using libyuv." << std::endl;
+        return;
+    }
+
+    // 注意：该函数中，是按照RGB顺序存储的
+    ret = libyuv::I420ToRAW(
+        yptr, y_stride,
+        uptr, u_stride,
+        vptr, v_stride,
+        bgr_data.data(), rgb_stride,
+        width, height
+    );
+    if(ret != 0) {
+        std::cerr << "Error converting YUV to BGR using libyuv." << std::endl;
+        return;
+    }
+
+    // print rgb data size
+    cv::Mat rgb_image(height, width, CV_8UC3, rgb_data.data());
+    cv::imwrite(rgb_file, rgb_image);
+
+    cv::Mat bgr_image(height, width, CV_8UC3, bgr_data.data());
+    cv::Mat bgr_image_converted;
+    cv::cvtColor(bgr_image, bgr_image_converted, cv::COLOR_RGB2BGR);
+    cv::imwrite(bgr_file, bgr_image_converted);
 }
 
 int main() {
@@ -159,21 +244,29 @@ int main() {
     yuv_info(yuv_file2, width2, height2, frame_size2);
 
     std::cout << "============================  yuv2gray ====================== " << std::endl;
-    std::string yuv_file3 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame.yuv";
+    std::string yuv_file3 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video_single_frame.yuv";
+    std::string yuv_file3_out = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame_gray.yuv";
     int width3 = 960;
     int height3 = 540;
     int frame_size3 = width3 * height3 * 3 / 2; // YUV420P格式
-    yuv2gray(yuv_file3, width3, height3, frame_size3);
+    yuv2gray(yuv_file3, yuv_file3_out, width3, height3, frame_size3);
 
     std::cout << "============================  yuv2jpg ====================== " << std::endl;
-    std::string yuv_file4 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p.yuv";
-    yuv2jpg(yuv_file4, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
-    std::string yuv_file5 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame.yuv";
-    yuv2jpg(yuv_file5, 960, 540, 960 * 540 * 3 / 2); // YUV420P格式
-    std::string yuv_gray_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame_gray.yuv";
-    yuv2jpg(yuv_gray_file, 960, 540, 960 * 540 * 3 /2); // YUV灰度格式
-    std::string yuv_file6 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frame_1.yuv";
-    yuv2jpg(yuv_file6, 960, 540, 960 * 540 * 3 /2); // YUV灰度格式
+    std::string yuv_file4 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+    std::string jpeg_file4 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p.jpg";
+    yuv2jpg(yuv_file4, jpeg_file4, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
+    std::string yuv_file5 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video_single_frame.yuv";
+    std::string jpeg_file5 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame.jpg";
+    yuv2jpg(yuv_file5, jpeg_file5, 960, 540, 960 * 540 * 3 / 2); // YUV420P格式
+    std::string yuv_gray_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/video_single_frame_gray.yuv";
+    std::string jpeg_gray_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/video_single_frame_gray.jpg";
+    yuv2jpg(yuv_gray_file, jpeg_gray_file, 960, 540, 960 * 540 * 3 /2); // YUV灰度格式
+
+    std::cout << "============================  yuv2rgb ====================== " << std::endl;
+    std::string yuv_file6 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+    std::string rgb_file6 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p_rgb_libyuv.jpg";
+    std::string bgr_file6 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p_bgr_libyuv.jpg";
+    yuv2rgb(yuv_file6, rgb_file6, bgr_file6, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
 
     return 0;
 }

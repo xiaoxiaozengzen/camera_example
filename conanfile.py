@@ -24,12 +24,17 @@ class ExampleConan(ConanFile):
     default_options = {
         "with_test": False,
     }
+    
+    def configure(self):
+        self.options["libyuv"].with_jpeg = "libjpeg-turbo"
 
     def requirements(self):
+        self.requires("libjpeg-turbo/2.1.5")
         self.requires("libpng/1.6.44")
         self.requires("zlib/1.2.13")
         self.requires("ffmpeg/4.3.2")
         self.requires("opencv/4.5.5@transformer/stable")
+        self.requires("libyuv/1768")
 
 
     def generate(self):
