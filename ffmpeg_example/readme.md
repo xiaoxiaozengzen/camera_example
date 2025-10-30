@@ -46,13 +46,14 @@ H.265码流是Annex-B和HVCC格式。
 
 #### NALU类型
 
-H.265的类型包含如下几个：
+H.265的类型包含如下几种：
 * VPS
 * SPS
 * PPS
 * SEI
 * I帧
 * P帧
+* ADU：Access Unit Delimiter，可选的NALU，显示标记一个AccessUnit(通常对应一帧或场景内的解码单元)的开始
 
 码流格式如下：
 ```bash
