@@ -34,3 +34,6 @@ NVSIPL：
 L4T：(Linux For Tegra)
 - 有个专门为Tegra架构设备的linux操作系统，定制的
 - 是为Jetson硬件平台定制
+
+NPPI：Nvidia Performance Primitives
+- 用于图像处理的一套函数集合，提供高性能的GPU端图像算子(例如，resize、colcor-convert)

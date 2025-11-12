@@ -35,6 +35,7 @@ class ExampleConan(ConanFile):
         self.requires("ffmpeg/4.3.2")
         self.requires("opencv/4.5.5@transformer/stable")
         self.requires("libyuv/1768")
+        self.requires("cudatoolkit/11.7.1")
 
 
     def generate(self):
