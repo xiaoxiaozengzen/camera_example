@@ -92,21 +92,48 @@ bool is_interleaved(nvjpegOutputFormat_t format)
         return false;
 }
 
+std::string subsamplingToString(int subsampling)
+{
+    switch(subsampling)
+    {
+        case static_cast<int>(NVJPEG_CSS_444):
+            return "NVJPEG_CSS_444";
+        case static_cast<int>(NVJPEG_CSS_422):
+            return "NVJPEG_CSS_422";
+        case static_cast<int>(NVJPEG_CSS_420):
+            return "NVJPEG_CSS_420";
+        case static_cast<int>(NVJPEG_CSS_440):
+            return "NVJPEG_CSS_440";
+        case static_cast<int>(NVJPEG_CSS_411):
+            return "NVJPEG_CSS_411";
+        case static_cast<int>(NVJPEG_CSS_410):
+            return "NVJPEG_CSS_410";
+        default:
+            return "Unknown";
+    }
+}
+
 
 // *****************************************************************************
 // nvJPEG handles and parameters
 // -----------------------------------------------------------------------------
-nvjpegBackend_t impl = NVJPEG_BACKEND_GPU_HYBRID; //NVJPEG_BACKEND_DEFAULT;
+/**
+ * enum nvjpegBackend_t {
+ *     NVJPEG_BACKEND_DEFAULT = 0,        // 默认后端
+ *     NVJPEG_BACKEND_HYBRID = 1,         // 使用CPU进行Huffman解码
+ *     NVJPEG_BACKEND_GPU_HYBRID = 2,     // 使用GPU辅助进行Huffman解码， nvjpegDecodeBatched会基于GPU进行Huffman解码
+ *     NVJPEG_BACKEND_HARDWARE = 3         // 使用专用硬件加速器进行解码
+ *     NVJPEG_BACKEND_GPU_HYBRID_DEVICE = 4 // nvjpegDecodeBatched支持bitstream直接从设备内存读取
+ *     NVJPEG_BACKEND_HARDWARE_DEVICE = 5   // nvjpegDecodeBatched支持bitstream直接从设备内存读取
+ * };
+ */
+nvjpegBackend_t impl = NVJPEG_BACKEND_GPU_HYBRID;
 nvjpegHandle_t nvjpeg_handle;
 nvjpegJpegStream_t nvjpeg_jpeg_stream;
 nvjpegDecodeParams_t nvjpeg_decode_params;
 nvjpegJpegState_t nvjpeg_decoder_state;
 nvjpegEncoderParams_t nvjpeg_encode_params;
 nvjpegEncoderState_t nvjpeg_encoder_state;
-
-#ifdef CUDA10U2 // This part needs CUDA 10.1 Update 2 for copy the metadata other information from base image.
-nvjpegJpegEncoding_t nvjpeg_encoding;
-#endif
 
 
 // *****************************************************************************
@@ -189,7 +216,7 @@ int decodeResizeEncodeOneImage(std::string sImagePath, std::string sOutputPath, 
         }
         std::cout << "Image Info: "
                   << " nComponent=" << nComponent
-                  << " subsampling=" << static_cast<int>(subsampling)
+                  << " subsampling=" << subsamplingToString(static_cast<int>(subsampling))
                   << " width[0]=" << widths[0]
                   << " height[0]=" << heights[0]
                   << " width[1]=" << widths[1]
@@ -281,20 +308,10 @@ int decodeResizeEncodeOneImage(std::string sImagePath, std::string sOutputPath, 
         // nvJPEG encoder parameter setting
         CHECK_NVJPEG(nvjpegEncoderParamsSetQuality(nvjpeg_encode_params, resize_quality, NULL));
 
-#ifdef OPTIMIZED_HUFFMAN  // Optimized Huffman
-#pragma message("OPTIMIZED_HUFFMAN is defined, compile nvjpegEncoderParamsSetOptimizedHuffman part")
-        CHECK_NVJPEG(nvjpegEncoderParamsSetOptimizedHuffman(nvjpeg_encode_params, 1, NULL));
-#endif
         CHECK_NVJPEG(nvjpegEncoderParamsSetSamplingFactors(nvjpeg_encode_params, subsampling, NULL));
 
         // Timing start
         CHECK_CUDA(cudaEventRecord(start, 0));
-
-#ifdef CUDA10U2 // This part needs CUDA 10.1 Update 2
-#pragma message("CUDA10U2 is defined, compile nvjpegJpegStreamParse part")
-        //parse image save metadata in jpegStream structure
-        CHECK_NVJPEG(nvjpegJpegStreamParse(nvjpeg_handle, dpImage, nSize, 1, 0, nvjpeg_jpeg_stream));
-#endif
 
         /**
          * nvjpegStatus_t nvjpegDecode(
@@ -349,15 +366,6 @@ int decodeResizeEncodeOneImage(std::string sImagePath, std::string sOutputPath, 
             return EXIT_FAILURE;
         }
 
-        // get encoding from the jpeg stream and copy it to the encode parameters
-#ifdef CUDA10U2 // This part needs CUDA 10.1 Update 2 for copy the metadata other information from base image.
-        CHECK_NVJPEG(nvjpegJpegStreamGetJpegEncoding(nvjpeg_jpeg_stream, &nvjpeg_encoding));
-        CHECK_NVJPEG(nvjpegEncoderParamsSetEncoding(nvjpeg_encode_params, nvjpeg_encoding, NULL));
-        CHECK_NVJPEG(nvjpegEncoderParamsCopyQuantizationTables(nvjpeg_encode_params, nvjpeg_jpeg_stream, NULL));
-        CHECK_NVJPEG(nvjpegEncoderParamsCopyHuffmanTables(nvjpeg_encoder_state, nvjpeg_encode_params, nvjpeg_jpeg_stream, NULL));
-        CHECK_NVJPEG(nvjpegEncoderParamsCopyMetadata(nvjpeg_encoder_state, nvjpeg_encode_params, nvjpeg_jpeg_stream, NULL));
-#endif
-
         // encoding the resize data
         CHECK_NVJPEG(nvjpegEncodeImage(nvjpeg_handle,
             nvjpeg_encoder_state,
@@ -379,7 +387,6 @@ int decodeResizeEncodeOneImage(std::string sImagePath, std::string sOutputPath, 
             NULL));
 
         obuffer.resize(length);
-        std::cout << "Encoded JPEG size: " << length << " bytes." <<  std::endl;
 
         CHECK_NVJPEG(nvjpegEncodeRetrieveBitstream(
             nvjpeg_handle,
@@ -399,13 +406,9 @@ int decodeResizeEncodeOneImage(std::string sImagePath, std::string sOutputPath, 
         char mkdir_cmd[256];
         std::string folder = sOutputPath;
         output_filename = folder + "/"+ sFileName +".jpg";
-#if !defined(_WIN32)
+
         sprintf(directory, "%s", folder.c_str());
         sprintf(mkdir_cmd, "mkdir -p %s 2> /dev/null", directory);
-#else
-        sprintf(directory, "%s", folder.c_str());
-        sprintf(mkdir_cmd, "mkdir %s 2> nul", directory);
-#endif
 
         int ret = system(mkdir_cmd);
 
