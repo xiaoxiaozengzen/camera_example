@@ -406,6 +406,64 @@ int decode_fun() {
         return -1;
     }
 
+    /**
+     * @brief AVBSFContext 是 FFmpeg 中的一个结构体，表示比特流过滤器上下文。一般用于将NALU的格式从AVCC转换为Annex-B格式。
+     * struct AVBSFContext {
+     *  const AVClass *av_class;       // 指向 AVClass 结构体的指针，包含有关此结构体的信息
+     *  const struct AVBitStreamFilter *filter; // 指向 AVBitStreamFilter 结构体的指针，表示比特流过滤器
+     *  AVBSFInternal *internal; // 指向 AVBSFInternal 结构体的指针，包含内部数据
+     *  void *priv_data;            // 指向私有数据的指针
+     *  AVCodecParameters *par_in;    // 指向输入编解码器参数的指针
+     *  AVCodecParameters *par_out;   // 指向输出编解码器
+     *  AVRational time_base_in;   // 输入时间基准
+     *  AVRational time_base_out;  // 输出时间基准
+     * };
+     *
+     * struuct AVBitStreamFilter {
+     *  const char *name;               // 过滤器的名称
+     *  const enum AVCodecID *codec_ids; // 支持的编解码器 ID 列表
+     *  const AVClass *priv_class;          // 指向私有类的指针
+     *  int priv_data_size;          // 私有数据的大小
+     * };
+     */
+    AVBSFContext *bsfc = NULL;
+    const AVBitStreamFilter *bsf = av_bsf_get_by_name("h264_mp4toannexb");
+    if(!bsf) {
+        std::cerr << "Could not find AVBitStreamFilter h264_mp4toannexb" << std::endl;
+        av_bsf_free(&bsfc);
+        avcodec_free_context(&codec_context);
+        avformat_close_input(&format_context);
+        avformat_free_context(format_context);
+        return -1;
+    }
+    ret = av_bsf_alloc(bsf, &bsfc);
+    if(ret < 0) {
+        std::cerr << "Could not allocate AVBSFContext, because: " << AVERROR(ENOMEM) << std::endl;
+        av_bsf_free(&bsfc);
+        avcodec_free_context(&codec_context);
+        avformat_close_input(&format_context);
+        avformat_free_context(format_context);
+        return -1;
+    }
+    avcodec_parameters_copy(bsfc->par_in, codecpar);
+    ret = av_bsf_init(bsfc);
+    if(ret < 0) {
+        std::cerr << "Could not initialize AVBSFContext, because: " << AVERROR(ENOMEM) << std::endl;
+        av_bsf_free(&bsfc);
+        avcodec_free_context(&codec_context);
+        avformat_close_input(&format_context);
+        avformat_free_context(format_context);
+        return -1;
+    }
+    std::cout << "AVBFSContext AVCodecParameters codec_type: " << av_get_media_type_string(bsfc->par_in->codec_type) << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters codec_id: " << avcodec_get_name(bsfc->par_in->codec_id) << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters codec_tag: " << bsfc->par_in->codec_tag << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters format: " << bsfc->par_in->format << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters bit_rate: " << bsfc->par_in->bit_rate / 1000 << " kbps" << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters profile: " << bsfc->par_in->profile << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters level: " << bsfc->par_in->level << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters width: " << bsfc->par_in->width << std::endl;
+    std::cout << "AVBFSContext AVCodecParameters height: " << bsfc->par_in->height << std::endl;
 
     /**
      * @brief AVPacket 是 FFmpeg 中的一个结构体，表示多媒体数据包。保存编码后的压缩数据，通常是音频或视频帧。
@@ -427,6 +485,16 @@ int decode_fun() {
     packet = av_packet_alloc();
     if(!packet) {
         std::cerr << "Could not allocate AVPacket, because: " << AVERROR(ENOMEM) << std::endl;
+        avcodec_free_context(&codec_context);
+        avformat_close_input(&format_context);
+        avformat_free_context(format_context);
+        return -1;
+    }
+
+    AVPacket *filtered_packet = av_packet_alloc();
+    if(!filtered_packet) {
+        std::cerr << "Could not allocate filtered AVPacket, because: " << AVERROR(ENOMEM) << std::endl;
+        av_packet_free(&packet);
         avcodec_free_context(&codec_context);
         avformat_close_input(&format_context);
         avformat_free_context(format_context);
@@ -525,6 +593,12 @@ int decode_fun() {
         ret = avcodec_send_packet(codec_context, packet);
         if(ret < 0) {
             std::cerr << "Could not send packet to decoder, because: " << AVERROR(ENOMEM) << std::endl;
+            break;
+        }
+
+        ret = av_bsf_send_packet(bsfc, packet);
+        if(ret < 0) {
+            std::cerr << "Could not send packet to AVBSFContext, because: " << AVERROR(ENOMEM) << std::endl;
             break;
         }
 
@@ -699,6 +773,38 @@ int decode_fun() {
 
             av_frame_unref(frame);
 
+        }
+
+        while(true) {
+            ret = av_bsf_receive_packet(bsfc, filtered_packet);
+            if(ret < 0) {
+                if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    // EAGAIN 表示没有更多的包可供读取，EOF 表示到达了文件末尾
+                    break;
+                } else {
+                    std::cerr << "Could not receive packet from AVBSFContext, because: " << AVERROR(ENOMEM) << std::endl;
+                    break;
+                }
+            }
+            if(packet_count == 1 || packet_count == 30) {
+                std::cout << "Filtered AVPacket pts: " << filtered_packet->pts << ", s = " << filtered_packet->pts / AV_TIME_BASE << std::endl;
+                std::cout << "Filtered AVPacket dts: " << filtered_packet->dts << ", s = " << filtered_packet->dts / AV_TIME_BASE << std::endl;
+                std::cout << "Filtered AVPacket data ptr: " << reinterpret_cast<void*>(filtered_packet->data) << std::endl;
+                std::cout << "Filtered AVPacket size: " << filtered_packet->size << std::endl;
+                std::cout << "Filtered AVPacket stream index: " << filtered_packet->stream_index << std::endl;
+                std::cout << "Filtered AVPacket flags: " << filtered_packet->flags << std::endl;
+                std::cout << "Filtered AVPacket side_data_elems: " << filtered_packet->side_data_elems << std::endl;
+                std::cout << "Filtered AVPacket duration: " << filtered_packet->duration << ", s = " << filtered_packet->duration / AV_TIME_BASE << std::endl;
+                std::cout << "Filtered AVPacket pos: " << filtered_packet->pos << std::endl;
+                std::cout << "Filtered AVPacket data (first 8 bytes): ";
+                for(int i = 0; i < 8 && i < filtered_packet->size; ++i) {
+                    std::cout << static_cast<int>(filtered_packet->data[i]) << " ";
+                }
+                std::cout << std::endl;
+            }
+            
+            // 释放filtered_packet中的数据，但是filtered_packet结构体还可以继续使用，避免重复分配内存
+            av_packet_unref(filtered_packet);
         }
         
     }

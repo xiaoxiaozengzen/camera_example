@@ -16,8 +16,36 @@ message(STATUS "CUDAToolkit_NVCC_EXECUTABLE: ${CUDAToolkit_NVCC_EXECUTABLE}")
 message(STATUS "CMAKE_SYSROOT_LINK : ${CMAKE_SYSROOT_LINK}")
 message(STATUS "CMAKE_SYSROOT     : ${CMAKE_SYSROOT}")
 
+find_package(ffmpeg REQUIRED)
 
 add_executable(nv_image_resize nv_image_resize.cpp)
 target_include_directories(nv_image_resize PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 target_link_directories(nv_image_resize PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
 target_link_libraries(nv_image_resize PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
+
+set(NVCODEV_DIR "/mnt/workspace/cgz_workspace/ThreeParty/Video_Codec_SDK_13.0.19")
+file(GLOB NV_DECODE_SRCS "nv_decode/*.cpp")
+add_executable(nv_video_decode ${NV_DECODE_SRCS})
+
+target_include_directories(
+    nv_video_decode PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${NVCODEV_DIR}/Interface
+    ${CMAKE_CURRENT_SOURCE_DIR}/nv_decode
+    ${ffmpeg_INCLUDE_DIRS}
+)
+
+target_link_directories(
+    nv_video_decode PUBLIC 
+    ${NVCODEV_DIR}/Lib/linux/stubs/x86_64
+    $ENV{CUDAToolkit_ROOT}/lib64
+)
+target_link_libraries(
+    nv_video_decode PUBLIC
+    CUDA::cudart
+    CUDA::cufft
+    cuda
+    nvcuvid 
+    nvidia-encode
+    ${ffmpeg_LIBRARIES}
+)

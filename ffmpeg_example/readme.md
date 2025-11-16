@@ -29,7 +29,7 @@ H264 原始码流是由一个接一个 NALU（NAL Unit） 组成，它的功能�
 一个 NALU = 一组对应于视频编码的 NALU 头部信息 + 一个原始字节序列负荷（RBSP，Raw Byte Sequence Payload）
 ![NALU](./doc/NALU.png)
 
-一个原始的 H.264 NALU 单元常由 [StartCode] [NALU Header] [NALU Payload] 三部分组成，其中 Start Code 用于标示这是一个NALU 单元的开始，必须是 “00 00 00 01”
+一个原始的 H.264 NALU(Annex-B格式) 单元常由 [StartCode] [NALU Header] [NALU Payload] 三部分组成，其中 Start Code 用于标示这是一个NALU 单元的开始，必须是 “00 00 00 01”
 
 #### 码流类型
 

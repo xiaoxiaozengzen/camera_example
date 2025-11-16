@@ -6,3 +6,5 @@ output/*.jpg
 output/*.png
 output/*.mp4
 output/*.avi
+output/*.h264
+output/*.h265
