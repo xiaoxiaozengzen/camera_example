@@ -20,3 +20,7 @@ target_link_libraries(ffmpeg_yuv2mp4_example ${ffmpeg_LIBRARIES} ${OpenCV_LIBRAR
 add_executable(ffmpeg_utility ffmpeg_utility.cpp)
 target_include_directories(ffmpeg_utility PRIVATE ${ffmpeg_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(ffmpeg_utility ${ffmpeg_LIBRARIES} ${OpenCV_LIBRARIES})
+
+add_executable(ffmpeg_mp4bsf_example ffmpeg_mp4bsf_example.cpp)
+target_include_directories(ffmpeg_mp4bsf_example PRIVATE ${ffmpeg_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(ffmpeg_mp4bsf_example ${ffmpeg_LIBRARIES} ${OpenCV_LIBRARIES})
