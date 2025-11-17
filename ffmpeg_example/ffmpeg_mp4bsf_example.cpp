@@ -215,54 +215,15 @@ class BSFExample {
         } else {    
             std::cout << "New stream created in output format context successfully." << std::endl;
         }
-        output_stream->time_base = {1, 25};
+        output_stream->time_base = stream->time_base;
+        ret = avcodec_parameters_copy(output_stream->codecpar, stream->codecpar);
+        if(ret < 0) {
+            std::cerr << "Could not copy codec parameters to output stream, because: " << AVERROR(ENOMEM) << std::endl;
+            return false;
+        } else {
+            std::cout << "Codec parameters copied to output stream successfully." << std::endl;
+        }
 
-        output_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-        if(!output_codec) {
-            std::cerr << "Could not find H264 encoder for output." << std::endl;
-            return false;
-        } else {
-            std::cout << "H264 encoder for output found: " << output_codec->name << std::endl;
-        }
-        output_codec_context = avcodec_alloc_context3(output_codec);
-        if(!output_codec_context) {
-            std::cerr << "Could not allocate output AVCodecContext, because: " << AVERROR(ENOMEM) << std::endl;
-            return false;
-        } else {
-            std::cout << "Output AVCodecContext allocated successfully." << std::endl;
-        }
-        output_codec_context->codec_type = AVMEDIA_TYPE_VIDEO;
-        output_codec_context->bit_rate = 400000;
-        output_codec_context->framerate = {25, 1};
-        output_codec_context->gop_size = 10;
-        output_codec_context->max_b_frames = 0;
-        output_codec_context->profile = FF_PROFILE_H264_HIGH;
-        output_codec_context->time_base = {1, 25};
-        output_codec_context->width = codec_context->width;
-        output_codec_context->height = codec_context->height;
-        output_codec_context->pix_fmt = AV_PIX_FMT_YUV420P;
-        output_codec_context->sample_aspect_ratio = {1, 1};
-        output_codec_context->color_range = AVCOL_RANGE_MPEG;
-        output_codec_context->color_primaries = AVCOL_PRI_BT709;
-        output_codec_context->color_trc = AVCOL_TRC_BT709;
-        output_codec_context->colorspace = AVCOL_SPC_BT709;
-        output_codec_context->chroma_sample_location = AVCHROMA_LOC_LEFT;
-        output_codec_context->field_order = AV_FIELD_PROGRESSIVE;
-        
-        ret = avcodec_parameters_from_context(output_stream->codecpar, output_codec_context);
-        if(ret < 0) {
-            std::cerr << "Could not copy output codec context parameters to output stream, because: " << AVERROR(ENOMEM) << std::endl;
-            return false;
-        } else {
-            std::cout << "Output codec context parameters copied to output stream successfully." << std::endl;
-        }
-        ret = avcodec_open2(output_codec_context, output_codec, nullptr);
-        if(ret < 0) {
-            std::cerr << "Could not open output codec, because: " << AVERROR(ENOMEM) << std::endl;
-            return false;
-        } else {
-            std::cout << "Output codec opened successfully." << std::endl;
-        }
         ret = avio_open2(&output_format_context->pb, output_h264_mp4_.c_str(), AVIO_FLAG_WRITE, &output_format_context->interrupt_callback, nullptr);
         if(ret < 0) {
             std::cerr << "Could not open output file '" << output_h264_mp4_ << "', because: " << AVERROR(ENOMEM) << std::endl;
@@ -337,7 +298,7 @@ class BSFExample {
             std::cout << std::endl;
 
             filtered_packet->stream_index = output_stream->index;
-            av_packet_rescale_ts(filtered_packet, output_codec_context->time_base, output_stream->time_base);
+            av_packet_rescale_ts(filtered_packet, stream->time_base, output_stream->time_base);
             ret = av_interleaved_write_frame(output_format_context, filtered_packet);
             if(ret < 0) {
                 std::cerr << "Could not write filtered packet to output file, because: " << AVERROR(ENOMEM) << std::endl;
