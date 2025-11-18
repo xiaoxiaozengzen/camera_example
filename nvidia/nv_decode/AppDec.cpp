@@ -300,8 +300,8 @@ int main(int argc, char **argv)
         CUcontext cuContext = NULL;
         createCudaContext(&cuContext, iGpu, 0);
 
-        // std::cout << "Decode with demuxing." << std::endl;
-        // DecodeMediaFile(cuContext, szInFilePath, szOutFilePath, bOutPlanar, cropRect, resizeDim, opPoint, bDispAllLayers, bExtractUserSEIMessage, decsurf, bExtStream);
+        std::cout << "Decode with demuxing." << std::endl;
+        DecodeMediaFile(cuContext, szInFilePath, szOutFilePath, bOutPlanar, cropRect, resizeDim, opPoint, bDispAllLayers, bExtractUserSEIMessage, decsurf, bExtStream);
     }
     catch (const std::exception& ex)
     {
