@@ -44,8 +44,14 @@ target_link_libraries(
     nv_video_decode PUBLIC
     CUDA::cudart
     CUDA::cufft
-    cuda
+    CUDA::cuda_driver
     nvcuvid 
     nvidia-encode
     ${ffmpeg_LIBRARIES}
 )
+get_target_property(cuda_driver_IID CUDA::cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
+message(STATUS "cuda_driver_IID: ${cuda_driver_IID}")
+get_target_property(cuda_driver_NAME CUDA::cuda_driver NAME)
+message(STATUS "cuda_driver_NAME: ${cuda_driver_NAME}")
+get_target_property(cuda_driver_location CUDA::cuda_driver IMPORTED_LOCATION)
+message(STATUS "cuda_driver_location: ${cuda_driver_location}")
