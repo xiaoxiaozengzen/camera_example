@@ -1,4 +1,4 @@
-project(nvidia_camera_example)
+project(nvidia_camera_example CXX CUDA)
 
 find_package(CUDAToolkit REQUIRED)
 message(STATUS "CUDAToolkit_FOUND: ${CUDAToolkit_FOUND}")
@@ -18,10 +18,22 @@ message(STATUS "CMAKE_SYSROOT     : ${CMAKE_SYSROOT}")
 
 find_package(ffmpeg REQUIRED)
 
-add_executable(nv_image_resize nv_image_resize.cpp)
-target_include_directories(nv_image_resize PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_directories(nv_image_resize PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
-target_link_libraries(nv_image_resize PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
+add_executable(nvjpeg_image_resize "resize/nvjpeg_image_resize.cpp")
+target_include_directories(nvjpeg_image_resize PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_directories(nvjpeg_image_resize PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
+target_link_libraries(nvjpeg_image_resize PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
+
+set(EXAMPLE "example")
+add_executable(${EXAMPLE} ${EXAMPLE}.cpp)
+target_include_directories(${EXAMPLE} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_directories(${EXAMPLE} PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
+target_link_libraries(${EXAMPLE} PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
+
+set(CUDA_STREAM_EVENT "cudastream_event/cuda_stream_event.cu")
+add_executable(cuda_stream_event ${CUDA_STREAM_EVENT})
+target_include_directories(cuda_stream_event PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_directories(cuda_stream_event PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
+target_link_libraries(cuda_stream_event PUBLIC CUDA::cudart)
 
 set(NVCODEV_DIR "/mnt/workspace/cgz_workspace/ThreeParty/Video_Codec_SDK_13.0.19")
 file(GLOB NV_DECODE_SRCS "nv_decode/*.cpp")
