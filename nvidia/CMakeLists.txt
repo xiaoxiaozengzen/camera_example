@@ -23,12 +23,6 @@ target_include_directories(nvjpeg_image_resize PRIVATE ${CUDAToolkit_INCLUDE_DIR
 target_link_directories(nvjpeg_image_resize PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
 target_link_libraries(nvjpeg_image_resize PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
 
-set(EXAMPLE "example")
-add_executable(${EXAMPLE} ${EXAMPLE}.cpp)
-target_include_directories(${EXAMPLE} PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-target_link_directories(${EXAMPLE} PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
-target_link_libraries(${EXAMPLE} PUBLIC cudart nppial nppicc nppidei nppif nppig nppim nvjpeg)
-
 set(CUDA_STREAM_EVENT "cudastream_event/cuda_stream_event.cu")
 add_executable(cuda_stream_event ${CUDA_STREAM_EVENT})
 target_include_directories(cuda_stream_event PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
