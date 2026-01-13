@@ -33,6 +33,7 @@
  *       一个stream对应一个执行队列
  *
  * typedef __device_builtin__ struct CUevent_st *cudaEvent_t;
+ * typedef struct cudaArray *cudaArray_t;
  */
 
 #define CHECK_CUDA(call)                                                   \
@@ -184,12 +185,15 @@ void cuda_memcpy_async() {
     uint8_t* h_dst = nullptr;
     CHECK_CUDA(cudaHostAlloc(&h_src, img_bytes, cudaHostAllocDefault));
     CHECK_CUDA(cudaHostAlloc(&h_dst, img_bytes, cudaHostAllocDefault));
+    memset(h_dst, 0, img_bytes);
+    memset(h_src, 0, img_bytes);
 
     // 填充数据
     for (size_t i = 0; i < img_bytes; ++i) h_src[i] = static_cast<uint8_t>(i & 0xFF);
 
     uint8_t* d_buf = nullptr;
     CHECK_CUDA(cudaMalloc(&d_buf, img_bytes));
+    CHECK_CUDA(cudaMemset(d_buf, 0, img_bytes));
 
     cudaStream_t stream;
     CHECK_CUDA(cudaStreamCreate(&stream));
@@ -246,10 +250,131 @@ void cuda_memcpy_async() {
     CHECK_CUDA(cudaFreeHost(h_dst));
 }
 
+/************************************ 3.cudaArray ************************************/
+/**
+ * struct __builtin_align__(16) float4 {
+ *     float x;
+ *     float y;
+ *     float z;
+ *     float w;
+ * };
+ */
+/**
+ * strut cudaChannelFormatDesc {
+ *     int x; // 第一个分量的位数
+ *     int y; // 第二个分量的位数
+ *     int z; // 第三个分量的位数
+ *     int w; // 第四个分量的位数
+ *     enum cudaChannelFormatKind f; // 分量的类型（如浮点型、整数型等）
+ * };
+ * enum cudaChannelFormatKind {
+ *     cudaChannelFormatKindSigned = 0,    // 有符号整数
+ *     cudaChannelFormatKindUnsigned = 1,  // 无符号整数
+ *     cudaChannelFormatKindFloat = 2,     // 浮点数
+ *     cudaChannelFormatKindNone = 3       // 无类型
+ *     cudaChannelFormatKindNV12 = 4    // unsigned 8-bit integer ,plannar 4:2:0 YUV
+ *     cudaChannelFormatKindUnsignedNormalized8X1 = 5 // 1 channel, 8-bit unsigned normalized
+ *     ... // 其他格式
+ * };
+ */
+__global__ void sampleKernel(cudaTextureObject_t texObj, float4* out, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) return;
+
+    // Use unnormalized coordinates (texDesc.normalizedCoords = 0)
+    float u = x + 0.5f;
+    float v = y + 0.5f;
+    float4 val = tex2D<float4>(texObj, u, v);
+    out[y * width + x] = val;
+}
+
+void cudaArray_example() {
+    const int width = 512;
+    const int height = 256;
+    const size_t numPixels = (size_t)width * height;
+
+    // 在host上分配并初始化图像数据，按照RGBA格式存储
+    float4* h_img = (float4*)malloc(numPixels * sizeof(float4));
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float u = float(x) / (width - 1);
+            float v = float(y) / (height - 1);
+            h_img[y * width + x] = make_float4(u, v, 0.0f, 1.0f);
+        }
+    }
+
+    // 创建通道格式描述符，用于定义cudaArray中数据的格式
+    // 这里使用float4类型，则每个分量占32位，分量类型是float
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float4>();
+    cudaArray_t cuArray;
+    CHECK_CUDA(cudaMallocArray(&cuArray, &channelDesc, width, height));
+
+    // 从host拷贝数据到cudaArray
+    CHECK_CUDA(cudaMemcpy2DToArray(
+        cuArray,              // dst
+        0, 0,                 // dstX, dstY
+        h_img,                // src
+        width * sizeof(float4), // srcPitch
+        width * sizeof(float4), // width in bytes
+        height,               // height
+        cudaMemcpyHostToDevice));
+
+    // Create resource descriptor
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = cuArray;
+
+    // Create texture descriptor
+    cudaTextureDesc texDesc = {};
+    texDesc.addressMode[0] = cudaAddressModeClamp;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModeLinear; // or cudaFilterModePoint
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 0; // use integer coordinates
+
+    // Create texture object
+    cudaTextureObject_t texObj = 0;
+    CHECK_CUDA(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
+
+    // Device output buffer
+    float4* d_out = nullptr;
+    CHECK_CUDA(cudaMalloc(&d_out, numPixels * sizeof(float4)));
+    // Launch kernel to sample texture into d_out
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+    sampleKernel<<<grid, block>>>(texObj, d_out, width, height);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // Copy back and verify a few pixels
+    float4* h_out = (float4*)malloc(numPixels * sizeof(float4));
+    CHECK_CUDA(cudaMemcpy(h_out, d_out, numPixels * sizeof(float4), cudaMemcpyDeviceToHost));
+
+    printf("Sample checks:\n");
+    for (int i = 0; i < 5; ++i) {
+        int x = i * (width / 5);
+        int y = height / 2;
+        float4 a = h_img[y * width + x];
+        float4 b = h_out[y * width + x];
+        printf(" (%d,%d) host=(%f,%f,%f,%f) gpu=(%f,%f,%f,%f)\n",
+               x, y, a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w);
+    }
+
+    // Cleanup
+    CHECK_CUDA(cudaDestroyTextureObject(texObj));
+    CHECK_CUDA(cudaFreeArray(cuArray));
+    CHECK_CUDA(cudaFree(d_out));
+    free(h_img);
+    free(h_out);
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "===================== cuda_stream_event =====================" << std::endl;
     cuda_stream_event();
     std::cout << "===================== cuda_memcpy_async =====================" << std::endl;
     cuda_memcpy_async();
+    std::cout << "===================== cudaArray_example =====================" << std::endl;
+    cudaArray_example();
     return 0;
 }
