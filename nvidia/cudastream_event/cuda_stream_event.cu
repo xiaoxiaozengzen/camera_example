@@ -330,12 +330,45 @@ void cudaArray_example() {
         height,               // height
         cudaMemcpyHostToDevice));
 
-    // Create resource descriptor
+    /**
+     * struct cudaResourceDesc {
+     *     enum cudaResourceType resType; // 资源类型（如数组、线性内存等）
+     *     union {
+     *         struct {
+     *             cudaArray_t array; // 指向cudaArray的指针
+     *         } array;
+     *         struct {
+     *           cudaMipmappedArray_t mipmap; // 指向cudaMipmappedArray的指针
+     *         } mipmap;
+     *         struct {
+     *             void* devPtr; // 指向线性内存的指针
+     *             struct cudaChannelFormatDesc desc; // 线性内存的通道格式描述符
+     *             size_t sizeInBytes; // 线性内存的大小（以字节为单位）
+     *         } linear;
+     *         struct {
+     *             void* devPtr; // 指向立方体纹理内存的指针
+     *             struct cudaChannelFormatDesc desc; // 立方体纹理的通道格式描述符
+     *             size_t width; // 立方体纹理的宽度
+     *             size_t height; // 立方体纹理的高度
+     *             size_t pitchInBytes; // 立方体纹理的行跨度（以字节为单位）
+     *         } pitch2D;
+     *     }res;
+     * };
+     */
     cudaResourceDesc resDesc = {};
     resDesc.resType = cudaResourceTypeArray;
     resDesc.res.array.array = cuArray;
 
-    // Create texture descriptor
+    /**
+     * struct cudaTextureDesc {
+     *     enum cudaTextureAddressMode addressMode[3]; // 地址模式（如环绕、镜像等）
+     *     enum cudaTextureFilterMode filterMode; // 过滤模式（如线性过滤、点过滤等）
+     *     enum cudaTextureReadMode readMode; // 读取模式（如元素类型、归一化等）
+     *     int sRGB; // 是否使用sRGB颜色空间
+     *     ... // 其他纹理描述符字段
+     *     int normalizedCoords; // 是否使用归一化坐标（0表示使用整数坐标，1表示使用归一化坐标）
+     * };
+     */
     cudaTextureDesc texDesc = {};
     texDesc.addressMode[0] = cudaAddressModeClamp;
     texDesc.addressMode[1] = cudaAddressModeClamp;
@@ -350,6 +383,7 @@ void cudaArray_example() {
     // Device output buffer
     float4* d_out = nullptr;
     CHECK_CUDA(cudaMalloc(&d_out, numPixels * sizeof(float4)));
+    
     // Launch kernel to sample texture into d_out
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
@@ -357,7 +391,7 @@ void cudaArray_example() {
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 
-    // Copy back and verify a few pixels
+    // 从设备复制结果回主机
     float4* h_out = (float4*)malloc(numPixels * sizeof(float4));
     CHECK_CUDA(cudaMemcpy(h_out, d_out, numPixels * sizeof(float4), cudaMemcpyDeviceToHost));
 
