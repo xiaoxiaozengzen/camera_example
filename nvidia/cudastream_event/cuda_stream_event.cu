@@ -310,10 +310,20 @@ void cudaArray_example() {
     cudaArray_t cuArray;
     CHECK_CUDA(cudaMallocArray(&cuArray, &channelDesc, width, height));
 
-    // 从host拷贝数据到cudaArray
+    /**
+     * @brief 将主机内存中src指向的矩阵(height行，每行width字节)复制到cudaArray中。
+     *        cudaArray的地址为dst，并从第hOffset行、第wOffset字节开始写入数据(左上角开始)。
+     * @param cuArray 目标cudaArray
+     * @param 0, 0 目标偏移量（dstX, dstY）
+     * @param h_img 源主机内存指针
+     * @param width * sizeof(float4) 源内存的行跨度（srcPitch）
+     * @param width * sizeof(float4) 复制的宽度（以字节为单位）
+     * @param height 复制的高度
+     * @param cudaMemcpyHostToDevice 复制方向（从主机到设备）
+     */
     CHECK_CUDA(cudaMemcpy2DToArray(
         cuArray,              // dst
-        0, 0,                 // dstX, dstY
+        0, 0,                 // wOffset, hOffset
         h_img,                // src
         width * sizeof(float4), // srcPitch
         width * sizeof(float4), // width in bytes
