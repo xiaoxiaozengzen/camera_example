@@ -253,7 +253,7 @@ void cuda_memcpy_async() {
     CHECK_CUDA(cudaFreeHost(h_dst));
 }
 
-/************************************ 3.cudaArray ************************************/
+/************************************ 3. Crop YUV Image ************************************/
 /**
  * struct __builtin_align__(16) float4 {
  *     float x;
@@ -280,62 +280,74 @@ void cuda_memcpy_async() {
  *     ... // 其他格式
  * };
  */
-__global__ void sampleKernel(cudaTextureObject_t texObj, float4* out, int width, int height) {
+__global__ void cropYUV_kernel(cudaTextureObject_t texY, cudaTextureObject_t texU, cudaTextureObject_t texV,
+                               unsigned char* outY, unsigned char* outU, unsigned char* outV,
+                               int in_w, int in_h, int crop_x, int crop_y, int crop_w, int crop_h)
+{
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= width || y >= height) return;
+    if (x >= crop_w || y >= crop_h) return;
 
-    // Use unnormalized coordinates (texDesc.normalizedCoords = 0)
-    float u = x + 0.5f;
-    float v = y + 0.5f;
-    float4 val = tex2D<float4>(texObj, u, v);
-    out[y * width + x] = val;
+    // Y plane: 1:1
+    int src_x = crop_x + x;
+    int src_y = crop_y + y;
+    /**
+     * @brief 在device上从纹理对象堆区一个texel值
+     * @note 因为readMode是cudaReadModeElementType，所以返回值类型还是unsigned char
+     * @note 因为normalizedCoords是0，所以坐标系还是像素坐标系，未归一化
+     * @note +0.5f是因为像素/texel的几何中心是在坐标(x+0.5, y+0.5)处。保证点采样和线性插值的一致性
+     * @note addressMode是cudaAddressModeClamp，所以坐标超出边界时会被设置为边界值
+     */
+    unsigned char yv = tex2D<unsigned char>(texY, src_x + 0.5f, src_y + 0.5f);
+    outY[x + y * crop_w] = yv;
+
+    // UV planes: subsampled by 2 (I420)
+    int uv_x = (crop_x / 2) + (x / 2);
+    int uv_y = (crop_y / 2) + (y / 2);
+    unsigned char uv = tex2D<unsigned char>(texU, uv_x + 0.5f, uv_y + 0.5f);
+    unsigned char vv = tex2D<unsigned char>(texV, uv_x + 0.5f, uv_y + 0.5f);
+
+    int out_uv_w = crop_w / 2;
+    int out_uv_x = x / 2;
+    int out_uv_y = y / 2;
+    outU[out_uv_x + out_uv_y * out_uv_w] = uv;
+    outV[out_uv_x + out_uv_y * out_uv_w] = vv;
 }
 
-void cudaArray_example() {
-    const int width = 512;
-    const int height = 256;
-    const size_t numPixels = (size_t)width * height;
+void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h_u, const unsigned char* h_v,
+                                int width, int height, int crop_x, int crop_y, int crop_w, int crop_h,
+                                unsigned char* h_out_y, unsigned char* h_out_u, unsigned char* h_out_v)
+{
+    // 创建通道格式描述符，这里yuv各分量均为8位无符号整数
+    cudaChannelFormatDesc chDesc = cudaCreateChannelDesc(8,0,0,0,cudaChannelFormatKindUnsigned);
 
-    // 在host上分配并初始化图像数据，按照RGBA格式存储
-    float4* h_img = (float4*)malloc(numPixels * sizeof(float4));
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            float u = float(x) / (width - 1);
-            float v = float(y) / (height - 1);
-            h_img[y * width + x] = make_float4(u, v, 0.0f, 1.0f);
-        }
-    }
-
-    // 创建通道格式描述符，用于定义cudaArray中数据的格式
-    // 这里使用float4类型，则每个分量占32位，分量类型是float
-    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float4>();
-    cudaArray_t cuArray;
-    CHECK_CUDA(cudaMallocArray(&cuArray, &channelDesc, width, height));
+    // allocate cudaArrays
+    cudaArray_t arrY, arrU, arrV;
+    CHECK_CUDA(cudaMallocArray(&arrY, &chDesc, width, height));
+    CHECK_CUDA(cudaMallocArray(&arrU, &chDesc, width/2, height/2));
+    CHECK_CUDA(cudaMallocArray(&arrV, &chDesc, width/2, height/2));
 
     /**
      * @brief 将主机内存中src指向的矩阵(height行，每行width字节)复制到cudaArray中。
      *        cudaArray的地址为dst，并从第hOffset行、第wOffset字节开始写入数据(左上角开始)。
-     * @param cuArray 目标cudaArray
-     * @param 0, 0 目标偏移量（dstX, dstY）
-     * @param h_img 源主机内存指针
-     * @param width * sizeof(float4) 源内存的行跨度（srcPitch）
-     * @param width * sizeof(float4) 复制的宽度（以字节为单位）
-     * @param height 复制的高度
-     * @param cudaMemcpyHostToDevice 复制方向（从主机到设备）
+     * @param dst 目标cudaArray
+     * @param woffest 偏移量
+     * @param hoffest 偏移量
+     * @param src 源主机内存指针
+     * @param spitch 矩阵在源内存中的行跨度（以字节为单位），可能包含padding
+     * @param width 矩阵的宽度（以字节为单位）
+     * @param height 矩阵的高度
+     * @param kind 复制方向（从主机到设备）
      */
-    CHECK_CUDA(cudaMemcpy2DToArray(
-        cuArray,              // dst
-        0, 0,                 // wOffset, hOffset
-        h_img,                // src
-        width * sizeof(float4), // srcPitch
-        width * sizeof(float4), // width in bytes
-        height,               // height
-        cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy2DToArray(arrY, 0, 0, h_y, width, width, height, cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy2DToArray(arrU, 0, 0, h_u, width/2, width/2, height/2, cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy2DToArray(arrV, 0, 0, h_v, width/2, width/2, height/2, cudaMemcpyHostToDevice));
 
     /**
+     * @brief 描述了需要纹理的资源类型和相关信息
+     *
      * struct cudaResourceDesc {
-     *     enum cudaResourceType resType; // 资源类型（如数组、线性内存等）
+     *     enum cudaResourceType resType; // 需要进行纹理的资源类型（如Array，Linear等）
      *     union {
      *         struct {
      *             cudaArray_t array; // 指向cudaArray的指针
@@ -360,13 +372,18 @@ void cudaArray_example() {
      */
     cudaResourceDesc resDesc = {};
     resDesc.resType = cudaResourceTypeArray;
-    resDesc.res.array.array = cuArray;
 
     /**
+     * @brief 描述了纹理对象的采样和访问方式
+     *
      * struct cudaTextureDesc {
-     *     enum cudaTextureAddressMode addressMode[3]; // 地址模式（如环绕、镜像等）
-     *     enum cudaTextureFilterMode filterMode; // 过滤模式（如线性过滤、点过滤等）
-     *     enum cudaTextureReadMode readMode; // 读取模式（如元素类型、归一化等）
+     *     // 纹理地址模式，决定纹理坐标被映射到0-1之外的情况，每个维度一个：
+     *     // Repat重复纹理，Clamp使用临界值，Mirror镜像重复，Border使用定值
+     *     enum cudaTextureAddressMode addressMode[3];
+     *     // 决定了获取纹理数据时的过滤方式（如点采样、线性插值等）
+     *     enum cudaTextureFilterMode filterMode;
+     *     // 整形数据是否表示成浮点数
+     *     enum cudaTextureReadMode readMode;
      *     int sRGB; // 是否使用sRGB颜色空间
      *     ... // 其他纹理描述符字段
      *     int normalizedCoords; // 是否使用归一化坐标（0表示使用整数坐标，1表示使用归一化坐标）
@@ -375,104 +392,13 @@ void cudaArray_example() {
     cudaTextureDesc texDesc = {};
     texDesc.addressMode[0] = cudaAddressModeClamp;
     texDesc.addressMode[1] = cudaAddressModeClamp;
-    texDesc.filterMode = cudaFilterModeLinear; // or cudaFilterModePoint
-    texDesc.readMode = cudaReadModeElementType;
-    texDesc.normalizedCoords = 0; // use integer coordinates
-
-    // Create texture object
-    cudaTextureObject_t texObj = 0;
-    CHECK_CUDA(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
-
-    // Device output buffer
-    float4* d_out = nullptr;
-    CHECK_CUDA(cudaMalloc(&d_out, numPixels * sizeof(float4)));
-    
-    // Launch kernel to sample texture into d_out
-    dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-    sampleKernel<<<grid, block>>>(texObj, d_out, width, height);
-    CHECK_CUDA(cudaGetLastError());
-    CHECK_CUDA(cudaDeviceSynchronize());
-
-    // 从设备复制结果回主机
-    float4* h_out = (float4*)malloc(numPixels * sizeof(float4));
-    CHECK_CUDA(cudaMemcpy(h_out, d_out, numPixels * sizeof(float4), cudaMemcpyDeviceToHost));
-
-    printf("Sample checks:\n");
-    for (int i = 0; i < 5; ++i) {
-        int x = i * (width / 5);
-        int y = height / 2;
-        float4 a = h_img[y * width + x];
-        float4 b = h_out[y * width + x];
-        printf(" (%d,%d) host=(%f,%f,%f,%f) gpu=(%f,%f,%f,%f)\n",
-               x, y, a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w);
-    }
-
-    // Cleanup
-    CHECK_CUDA(cudaDestroyTextureObject(texObj));
-    CHECK_CUDA(cudaFreeArray(cuArray));
-    CHECK_CUDA(cudaFree(d_out));
-    free(h_img);
-    free(h_out);
-}
-
-/************************************ 4. Crop YUV Image ************************************/
-__global__ void cropYUV_kernel(cudaTextureObject_t texY, cudaTextureObject_t texU, cudaTextureObject_t texV,
-                               unsigned char* outY, unsigned char* outU, unsigned char* outV,
-                               int in_w, int in_h, int crop_x, int crop_y, int crop_w, int crop_h)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= crop_w || y >= crop_h) return;
-
-    // Y plane: 1:1
-    int src_x = crop_x + x;
-    int src_y = crop_y + y;
-    unsigned char yv = tex2D<unsigned char>(texY, src_x + 0.5f, src_y + 0.5f);
-    outY[y * crop_w + x] = yv;
-
-    // UV planes: subsampled by 2 (I420)
-    int uv_x = (crop_x / 2) + (x / 2);
-    int uv_y = (crop_y / 2) + (y / 2);
-    unsigned char uv = tex2D<unsigned char>(texU, uv_x + 0.5f, uv_y + 0.5f);
-    unsigned char vv = tex2D<unsigned char>(texV, uv_x + 0.5f, uv_y + 0.5f);
-
-    int out_uv_w = crop_w / 2;
-    int out_uv_x = x / 2;
-    int out_uv_y = y / 2;
-    outU[out_uv_y * out_uv_w + out_uv_x] = uv;
-    outV[out_uv_y * out_uv_w + out_uv_x] = vv;
-}
-
-void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h_u, const unsigned char* h_v,
-                                int width, int height, int crop_x, int crop_y, int crop_w, int crop_h,
-                                unsigned char* h_out_y, unsigned char* h_out_u, unsigned char* h_out_v)
-{
-    // channel desc for 8-bit unsigned single channel
-    cudaChannelFormatDesc chDesc = cudaCreateChannelDesc(8,0,0,0,cudaChannelFormatKindUnsigned);
-
-    // allocate cudaArrays
-    cudaArray_t arrY, arrU, arrV;
-    CHECK_CUDA(cudaMallocArray(&arrY, &chDesc, width, height));
-    CHECK_CUDA(cudaMallocArray(&arrU, &chDesc, width/2, height/2));
-    CHECK_CUDA(cudaMallocArray(&arrV, &chDesc, width/2, height/2));
-
-    // copy host planes into arrays (row pitch equals row bytes)
-    CHECK_CUDA(cudaMemcpy2DToArray(arrY, 0, 0, h_y, width, width, height, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy2DToArray(arrU, 0, 0, h_u, width/2, width/2, height/2, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy2DToArray(arrV, 0, 0, h_v, width/2, width/2, height/2, cudaMemcpyHostToDevice));
-
-    // create texture objects (point sampling, integer coords)
-    cudaResourceDesc resDesc = {};
-    resDesc.resType = cudaResourceTypeArray;
-
-    cudaTextureDesc texDesc = {};
-    texDesc.addressMode[0] = cudaAddressModeClamp;
-    texDesc.addressMode[1] = cudaAddressModeClamp;
-    texDesc.filterMode = cudaFilterModePoint; // no interpolation for exact texel fetch
+    texDesc.filterMode = cudaFilterModePoint;
     texDesc.readMode = cudaReadModeElementType;
     texDesc.normalizedCoords = 0; // use integer coords
 
+    /**
+     * @brief 纹理对象
+     */
     cudaTextureObject_t texY=0, texU=0, texV=0;
     // Y
     resDesc.res.array.array = arrY;
