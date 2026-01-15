@@ -1,4 +1,7 @@
 #include <iostream>
+#include <vector>
+#include <fstream>
+
 #include <cuda_runtime.h>
 #include <cuda.h>
 
@@ -413,6 +416,159 @@ void cudaArray_example() {
     free(h_out);
 }
 
+/************************************ 4. Crop YUV Image ************************************/
+__global__ void cropYUV_kernel(cudaTextureObject_t texY, cudaTextureObject_t texU, cudaTextureObject_t texV,
+                               unsigned char* outY, unsigned char* outU, unsigned char* outV,
+                               int in_w, int in_h, int crop_x, int crop_y, int crop_w, int crop_h)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= crop_w || y >= crop_h) return;
+
+    // Y plane: 1:1
+    int src_x = crop_x + x;
+    int src_y = crop_y + y;
+    unsigned char yv = tex2D<unsigned char>(texY, src_x + 0.5f, src_y + 0.5f);
+    outY[y * crop_w + x] = yv;
+
+    // UV planes: subsampled by 2 (I420)
+    int uv_x = (crop_x / 2) + (x / 2);
+    int uv_y = (crop_y / 2) + (y / 2);
+    unsigned char uv = tex2D<unsigned char>(texU, uv_x + 0.5f, uv_y + 0.5f);
+    unsigned char vv = tex2D<unsigned char>(texV, uv_x + 0.5f, uv_y + 0.5f);
+
+    int out_uv_w = crop_w / 2;
+    int out_uv_x = x / 2;
+    int out_uv_y = y / 2;
+    outU[out_uv_y * out_uv_w + out_uv_x] = uv;
+    outV[out_uv_y * out_uv_w + out_uv_x] = vv;
+}
+
+void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h_u, const unsigned char* h_v,
+                                int width, int height, int crop_x, int crop_y, int crop_w, int crop_h,
+                                unsigned char* h_out_y, unsigned char* h_out_u, unsigned char* h_out_v)
+{
+    // channel desc for 8-bit unsigned single channel
+    cudaChannelFormatDesc chDesc = cudaCreateChannelDesc(8,0,0,0,cudaChannelFormatKindUnsigned);
+
+    // allocate cudaArrays
+    cudaArray_t arrY, arrU, arrV;
+    CHECK_CUDA(cudaMallocArray(&arrY, &chDesc, width, height));
+    CHECK_CUDA(cudaMallocArray(&arrU, &chDesc, width/2, height/2));
+    CHECK_CUDA(cudaMallocArray(&arrV, &chDesc, width/2, height/2));
+
+    // copy host planes into arrays (row pitch equals row bytes)
+    CHECK_CUDA(cudaMemcpy2DToArray(arrY, 0, 0, h_y, width, width, height, cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy2DToArray(arrU, 0, 0, h_u, width/2, width/2, height/2, cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy2DToArray(arrV, 0, 0, h_v, width/2, width/2, height/2, cudaMemcpyHostToDevice));
+
+    // create texture objects (point sampling, integer coords)
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+
+    cudaTextureDesc texDesc = {};
+    texDesc.addressMode[0] = cudaAddressModeClamp;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModePoint; // no interpolation for exact texel fetch
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 0; // use integer coords
+
+    cudaTextureObject_t texY=0, texU=0, texV=0;
+    // Y
+    resDesc.res.array.array = arrY;
+    CHECK_CUDA(cudaCreateTextureObject(&texY, &resDesc, &texDesc, nullptr));
+    // U
+    resDesc.res.array.array = arrU;
+    CHECK_CUDA(cudaCreateTextureObject(&texU, &resDesc, &texDesc, nullptr));
+    // V
+    resDesc.res.array.array = arrV;
+    CHECK_CUDA(cudaCreateTextureObject(&texV, &resDesc, &texDesc, nullptr));
+
+    // allocate device linear outputs
+    unsigned char *d_outY=nullptr, *d_outU=nullptr, *d_outV=nullptr;
+    size_t outY_bytes = (size_t)crop_w * crop_h;
+    size_t outUV_bytes = (size_t)(crop_w/2) * (crop_h/2);
+    CHECK_CUDA(cudaMalloc(&d_outY, outY_bytes));
+    CHECK_CUDA(cudaMalloc(&d_outU, outUV_bytes));
+    CHECK_CUDA(cudaMalloc(&d_outV, outUV_bytes));
+
+    // launch kernel
+    dim3 block(16,16);
+    dim3 grid((crop_w + block.x - 1)/block.x, (crop_h + block.y - 1)/block.y);
+    cropYUV_kernel<<<grid, block>>>(texY, texU, texV, d_outY, d_outU, d_outV,
+                                    width, height, crop_x, crop_y, crop_w, crop_h);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // copy back
+    CHECK_CUDA(cudaMemcpy(h_out_y, d_outY, outY_bytes, cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_out_u, d_outU, outUV_bytes, cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_out_v, d_outV, outUV_bytes, cudaMemcpyDeviceToHost));
+
+    // cleanup
+    CHECK_CUDA(cudaDestroyTextureObject(texY));
+    CHECK_CUDA(cudaDestroyTextureObject(texU));
+    CHECK_CUDA(cudaDestroyTextureObject(texV));
+    CHECK_CUDA(cudaFreeArray(arrY));
+    CHECK_CUDA(cudaFreeArray(arrU));
+    CHECK_CUDA(cudaFreeArray(arrV));
+    CHECK_CUDA(cudaFree(d_outY));
+    CHECK_CUDA(cudaFree(d_outU));
+    CHECK_CUDA(cudaFree(d_outV));
+}
+
+void cropYUV420() {
+    std::string input_yuv = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+    std::string output_yuv = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p_crop.yuv";
+    const int width = 1080;
+    const int height = 1920;
+    const int crop_x = 100;
+    const int crop_y = 200;
+    const int crop_w = 640;
+    const int crop_h = 480;
+    size_t frame_size = (size_t)width * height * 3 / 2; // YUV420p
+    size_t y_size = (size_t)width * height;
+    size_t uv_size = (size_t)(width / 2) * (height / 2);
+    size_t crop_y_size = (size_t)crop_w * crop_h;
+    size_t crop_uv_size = (size_t)(crop_w / 2) * (crop_h / 2);
+    std::ifstream infile(input_yuv, std::ios::binary|std::ios::in|std::ios::ate);
+    if(!infile.is_open()) {
+        std::cerr << "Failed to open input YUV file: " << input_yuv << std::endl;
+        return;
+    }
+    size_t file_size = infile.tellg();
+    if(file_size < frame_size) {
+        std::cerr << "Input YUV file size is smaller than expected frame size." << std::endl;
+        return;
+    }
+    infile.seekg(0, std::ios::beg);
+    std::vector<unsigned char> h_y(y_size);
+    std::vector<unsigned char> h_u(uv_size);
+    std::vector<unsigned char> h_v(uv_size);
+    infile.read(reinterpret_cast<char*>(h_y.data()), y_size);
+    infile.read(reinterpret_cast<char*>(h_u.data()), uv_size);
+    infile.read(reinterpret_cast<char*>(h_v.data()), uv_size);
+    infile.close();
+    std::vector<unsigned char> h_out_y(crop_y_size);
+    std::vector<unsigned char> h_out_u(crop_uv_size);
+    std::vector<unsigned char> h_out_v(crop_uv_size);
+    cropYUV420_using_cudaArray(
+        h_y.data(), h_u.data(), h_v.data(),
+        width, height,
+        crop_x, crop_y, crop_w, crop_h,
+        h_out_y.data(), h_out_u.data(), h_out_v.data()
+    );
+    std::ofstream outfile(output_yuv, std::ios::binary|std::ios::out);
+    if(!outfile.is_open()) {
+        std::cerr << "Failed to open output YUV file: " << output_yuv << std::endl;
+        return;
+    }
+    outfile.write(reinterpret_cast<char*>(h_out_y.data()), crop_y_size);
+    outfile.write(reinterpret_cast<char*>(h_out_u.data()), crop_uv_size);
+    outfile.write(reinterpret_cast<char*>(h_out_v.data()), crop_uv_size);
+    outfile.close();
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "===================== cuda_stream_event =====================" << std::endl;
     cuda_stream_event();
@@ -420,5 +576,7 @@ int main(int argc, char* argv[]) {
     cuda_memcpy_async();
     std::cout << "===================== cudaArray_example =====================" << std::endl;
     cudaArray_example();
+    std::cout << "===================== cropYUV420 =====================" << std::endl;
+    cropYUV420();
     return 0;
 }
