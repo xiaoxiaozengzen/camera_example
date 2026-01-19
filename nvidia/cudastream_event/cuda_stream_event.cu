@@ -500,8 +500,6 @@ int main(int argc, char* argv[]) {
     cuda_stream_event();
     std::cout << "===================== cuda_memcpy_async =====================" << std::endl;
     cuda_memcpy_async();
-    std::cout << "===================== cudaArray_example =====================" << std::endl;
-    cudaArray_example();
     std::cout << "===================== cropYUV420 =====================" << std::endl;
     cropYUV420();
     return 0;
