@@ -35,5 +35,10 @@ L4T：(Linux For Tegra)
 - 有个专门为Tegra架构设备的linux操作系统，定制的
 - 是为Jetson硬件平台定制
 
-NPPI：Nvidia Performance Primitives
-- 用于图像处理的一套函数集合，提供高性能的GPU端图像算子(例如，resize、colcor-convert)
+NPP：NVIDIA Performance Primitives，是专为 CUDA 架构设计的图像和信号处理 GPU 加速库
+* NPPI：Nvidia Performance Primitives Imaging
+  * NPPI 包含了与图像处理相关的功能。这个命名空间提供了用于执行各种图像处理任务的函数，如滤波、颜色空间转换、图像金字塔等。
+* NPPC：NVIDIA Performance Primitives Core， 
+  * NPPC 包含了 NPP 库的核心功能，提供了一些基本的操作和功能，如数据类型定义、常量定义等。这个命名空间通常用于包含 NPP 库中的核心组件
+* NPPS：NVIDIA Performance Primitives Signal
+  * NPPS 包含了与信号处理相关的功能。这个命名空间提供了用于处理信号和时间序列数据的函数，包括傅里叶变换、卷积、滤波器设计等。

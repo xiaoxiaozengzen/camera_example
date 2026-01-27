@@ -109,6 +109,14 @@ void cuda_stream_event() {
     cudaEventCreate(&event1);
     cudaEventCreate(&event1_stop);
 
+    unsigned int cudastream_flags = 0;
+    /**
+     * cudaStreamDefault：0，默认流标志，表示标准的流行为。
+     * cudaStreamNonBlocking：1，非阻塞流标志，表示流中的操作跟默认流（stream 0）的并行的
+     */
+    CHECK_CUDA(cudaStreamGetFlags(stream1, &cudastream_flags));
+    std::cout << "Stream1 flags: " << cudastream_flags << std::endl;
+
     // 定义重复次数
     const int64_t repeat = 1000;
 

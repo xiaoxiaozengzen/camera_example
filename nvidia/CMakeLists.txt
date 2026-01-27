@@ -32,7 +32,6 @@ target_link_libraries(cuda_stream_event PUBLIC CUDA::cudart)
 set(NVCODEV_DIR "/mnt/workspace/cgz_workspace/ThreeParty/Video_Codec_SDK_13.0.19")
 file(GLOB NV_DECODE_SRCS "nv_decode/*.cpp")
 add_executable(nv_video_decode ${NV_DECODE_SRCS})
-
 target_include_directories(
     nv_video_decode PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}
@@ -40,7 +39,6 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/nv_decode
     ${ffmpeg_INCLUDE_DIRS}
 )
-
 target_link_directories(
     nv_video_decode PUBLIC 
     ${NVCODEV_DIR}/Lib/linux/stubs/x86_64
@@ -55,6 +53,20 @@ target_link_libraries(
     nvidia-encode
     ${ffmpeg_LIBRARIES}
 )
+
+add_executable(npp_example npp_example/npp_example.cpp)
+target_include_directories(npp_example PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_libraries(npp_example PUBLIC
+    CUDA::nppial
+    CUDA::nppicc 
+    CUDA::nppidei 
+    CUDA::nppif 
+    CUDA::nppig 
+    CUDA::nppim 
+    CUDA::cudart
+)
+
+# Inspecting CUDA::cuda_driver target properties
 get_target_property(cuda_driver_IID CUDA::cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
 message(STATUS "cuda_driver_IID: ${cuda_driver_IID}")
 get_target_property(cuda_driver_NAME CUDA::cuda_driver NAME)
