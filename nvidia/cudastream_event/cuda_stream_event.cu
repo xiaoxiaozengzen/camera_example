@@ -191,20 +191,37 @@ void cuda_memcpy_async() {
      *
      * cudaHostAlloc与设备做主机<->设备的异步拷贝时，能够显著提升数据传输效率，减少延迟。
      * maclloc申请的pageable内存，会被临时拷贝到一个中间的pinned内存区域，再由该区域传输到设备，增加了额外的拷贝开销。
+     *
+     * cudaHostAlloc的标志：
+     * cudaHostAllocDefault：默认标志，表示分配的内存是页锁定的，可以用于异步数据传输
+     * cudaHostAllocMapped：映射标志，表示分配的内存可以映射到设备地址空间，允许设备直接访问该内存
+     *                      用于零拷贝访问（zero-copy access），适合小数据量低频访问场景
+     * cudaHostAllocPortable：可移植标志，表示分配的内存可以在多个CUDA上下文中使用
      */
     uint8_t* h_src = nullptr;
     uint8_t* h_dst = nullptr;
+    uint8_t* h_data = nullptr;
     CHECK_CUDA(cudaHostAlloc(&h_src, img_bytes, cudaHostAllocDefault));
     CHECK_CUDA(cudaHostAlloc(&h_dst, img_bytes, cudaHostAllocDefault));
+    CHECK_CUDA(cudaHostAlloc(&h_data, img_bytes, cudaHostAllocMapped));
     memset(h_dst, 0, img_bytes);
     memset(h_src, 0, img_bytes);
+    memset(h_data, 0, img_bytes);
 
     // 填充数据
     for (size_t i = 0; i < img_bytes; ++i) h_src[i] = static_cast<uint8_t>(i & 0xFF);
+    for (size_t i = 0; i < img_bytes; ++i) h_data[i] = static_cast<uint8_t>(i & 0xFF);
 
+    // 分配设备内存
     uint8_t* d_buf = nullptr;
     CHECK_CUDA(cudaMalloc(&d_buf, img_bytes));
     CHECK_CUDA(cudaMemset(d_buf, 0, img_bytes));
+
+    uint8_t* d_data = nullptr;
+    /**
+     * @brief 将cudaHostAlloc申请的pinned内存，映射到设备地址空间，获取对应的设备指针
+     */
+    CHECK_CUDA(cudaHostGetDevicePointer(&d_data, h_data, 0));
 
     cudaStream_t stream;
     CHECK_CUDA(cudaStreamCreate(&stream));
@@ -228,6 +245,7 @@ void cuda_memcpy_async() {
     const int threads = 256;
     const int blocks = static_cast<int>((img_bytes + threads - 1) / threads);
     invert_kernel<<<blocks, threads, 0, stream>>>(d_buf, img_bytes);
+    invert_kernel<<<blocks, threads, 0, stream>>>(d_data, img_bytes);
     CHECK_CUDA(cudaGetLastError());
 
     CHECK_CUDA(cudaMemcpyAsync(h_dst, d_buf, img_bytes, cudaMemcpyDeviceToHost, stream));
@@ -251,6 +269,9 @@ void cuda_memcpy_async() {
         }
     }
     std::cout << "Validation: " << (ok ? "PASS" : "FAIL") << "\n";
+    for (int i = 0; i < 16; ++i) {
+        std::cout << "h_data[" << i << "] = " << static_cast<int>(h_data[i]) << "\n";
+    }
 
     // 释放资源
     CHECK_CUDA(cudaEventDestroy(start));
@@ -259,6 +280,8 @@ void cuda_memcpy_async() {
     CHECK_CUDA(cudaFree(d_buf));
     CHECK_CUDA(cudaFreeHost(h_src));
     CHECK_CUDA(cudaFreeHost(h_dst));
+    CHECK_CUDA(cudaFreeHost(h_data));
+    d_data = nullptr;
 }
 
 /************************************ 3. Crop YUV Image ************************************/
