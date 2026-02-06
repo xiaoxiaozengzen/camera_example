@@ -358,6 +358,22 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
     CHECK_CUDA(cudaMallocArray(&arrU, &chDesc, width/2, height/2));
     CHECK_CUDA(cudaMallocArray(&arrV, &chDesc, width/2, height/2));
 
+    size_t dst_pitch = width * sizeof(unsigned char); // 每行的字节数
+    size_t dst_width = width * sizeof(unsigned char); // 复制的宽度（以字节为单位）
+    size_t dst_height = height;                        // 复制的高度
+    unsigned char* dst_ptr = nullptr;              // 目标内存指针
+    /**
+     * @brief 分配二维数组的内存，并返回指向分配内存的指针和行跨度
+     * @param devPtr 指向分配内存的指针
+     * @param pitch 返回分配内存的行跨度（以字节为单位）
+     * @param width 分配内存的宽度（以字节为单位）
+     * @param height 分配内存的高度
+     *
+     * @note 返回的pitch可能大于width，以满足内存对齐要求，提高内存访问效率
+     * @note pitch也用于计算二维数组数据的地址：dst_ptr = base_ptr + row * pitch + col
+     */
+    CHECK_CUDA(cudaMallocPitch(&dst_ptr, &dst_pitch, dst_width, dst_height));
+
     /**
      * @brief 将主机内存中src指向的矩阵(height行，每行width字节)复制到cudaArray中。
      *        cudaArray的地址为dst，并从第hOffset行、第wOffset字节开始写入数据(左上角开始)。
@@ -373,6 +389,23 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
     CHECK_CUDA(cudaMemcpy2DToArray(arrY, 0, 0, h_y, width, width, height, cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy2DToArray(arrU, 0, 0, h_u, width/2, width/2, height/2, cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy2DToArray(arrV, 0, 0, h_v, width/2, width/2, height/2, cudaMemcpyHostToDevice));
+
+    /**
+     * @brief 从src指向的cudaArray的hOffset行、wOffset字节开始读取数据(左上角开始)，
+     *        并将读取到的矩阵(height行，每行width字节)复制到线性的目标内存dst中。
+     * @param dst 目标线性内存指针
+     * @param dpitch 目标内存的行跨度（以字节为单位）
+     * @param src 源cudaArray地址
+     * @param woffest 偏移量(以字节为单位)
+     * @param hoffest 偏移量
+     * @param width 矩阵的宽度（以字节为单位）
+     * @param height 矩阵的高度
+     * @param kind 复制方向（从设备到设备）
+     * @param stream CUDA流，用于异步操作，不指定则为默认流
+     *
+     * @note 本来想使用cudaMemcpyFast2DFromArrayAsync，但是当前机器cuda不支持
+     */
+    CHECK_CUDA(cudaMemcpy2DFromArrayAsync(dst_ptr, dst_pitch, arrY, 0, 0, dst_width, dst_height, cudaMemcpyDeviceToDevice));
 
     /**
      * @brief 描述了需要纹理的资源类型和相关信息
@@ -472,6 +505,7 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
     CHECK_CUDA(cudaFree(d_outY));
     CHECK_CUDA(cudaFree(d_outU));
     CHECK_CUDA(cudaFree(d_outV));
+    CHECK_CUDA(cudaFree(dst_ptr));
 }
 
 void cropYUV420() {
