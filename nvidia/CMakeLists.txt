@@ -66,6 +66,10 @@ target_link_libraries(npp_example PUBLIC
     CUDA::cudart
 )
 
+add_executable(cuda_graph cudagraph_example/cuda_graph.cu)
+target_include_directories(cuda_graph PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_libraries(cuda_graph PUBLIC CUDA::cudart)
+
 # Inspecting CUDA::cuda_driver target properties
 get_target_property(cuda_driver_IID CUDA::cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
 message(STATUS "cuda_driver_IID: ${cuda_driver_IID}")
