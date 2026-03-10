@@ -8,3 +8,4 @@ output/*.mp4
 output/*.avi
 output/*.h264
 output/*.h265
+output/*.jpeg
