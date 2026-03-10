@@ -1,5 +1,7 @@
 #include <iostream>
 #include <vector>
+#include <fstream>
+
 #include <cuda_runtime.h>
 #include <npp.h>
 #include <nppi.h>
@@ -44,7 +46,7 @@
  * };
  */
 
-int main() {
+void npp_sample_example() {
   cudaStream_t stream = nppGetStream();
   if(stream) {
     std::cout << "Current NPP CUDA Stream: " << stream << std::endl;
@@ -98,6 +100,14 @@ int main() {
    * @param pDst 目标图像数据指针
    * @param nDstStep 目标图像每行的字节数（stride）
    * @param oSizeROI 图像的宽度
+   * @return NppStatus，表示函数执行的状态
+   *
+   * @note 函数名字简单解析：
+   *       nppi：NPP的图像处理模块
+   *       Copy：拷贝
+   *       8u：像素的数据类型是8-bit unsigned
+   *       C3：三通道交错存储，例如RGBRGB
+   *       R：带ROI的版本
    */
   CHECK_NPP(nppiCopy_8u_C3R(d_src, srcStep, d_dst, dstStep, roi));
 
@@ -129,5 +139,244 @@ int main() {
 
   cudaFree(d_src);
   cudaFree(d_dst);
+}
+
+void npp_resize_example() {
+  // 输入输出图像路径
+  std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+  std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_npp_resized.yuv";
+  
+  // 获取输入图像数据
+  std::ifstream input_file(input_image_path, std::ios::binary | std::ios::ate);
+  if (!input_file.is_open()) {
+    std::cerr << "Failed to open input file: " << input_image_path << std::endl;
+    return;
+  }
+  std::streamsize input_size = input_file.tellg();
+  input_file.seekg(0, std::ios::beg);
+  std::vector<unsigned char> h_src(input_size);
+  if (!input_file.read(reinterpret_cast<char*>(h_src.data()), input_size)) {
+    std::cerr << "Failed to read input file: " << input_image_path << std::endl;
+    return;
+  }
+
+  // 定义源图像和目标图像的尺寸
+  const int src_width = 1080;
+  const int src_height = 1920;
+  const int dst_width = 540;
+  const int dst_height = 540;
+
+  // 计算YUV420P格式中Y、U、V分量的大小和帧大小
+  const size_t src_y_size = src_width * src_height;
+  const size_t src_u_size = (src_width / 2) * (src_height / 2);
+  const size_t src_v_size = src_u_size;
+  const size_t src_frame_size = src_y_size + src_u_size + src_v_size;
+  const size_t dst_y_size = dst_width * dst_height;
+  const size_t dst_u_size = (dst_width / 2) * (dst_height / 2);
+  const size_t dst_v_size = dst_u_size;
+  const size_t dst_frame_size = dst_y_size + dst_u_size + dst_v_size;
+
+  // host端源图像和目标图像数据指针
+  const unsigned char* h_src_y = h_src.data();
+  const unsigned char* h_src_u = h_src.data() + src_y_size;
+  const unsigned char* h_src_v = h_src.data() + src_y_size + src_u_size;
+  std::vector<unsigned char> h_dst(dst_frame_size, 0);
+  unsigned char* h_dst_y = h_dst.data();
+  unsigned char* h_dst_u = h_dst.data() + dst_y_size;
+  unsigned char* h_dst_v = h_dst.data() + dst_y_size + dst_u_size;
+
+  cudaStream_t c_stream = nullptr;
+  c_stream = nppGetStream();
+  if(c_stream) {
+    std::cout << "Current NPP CUDA Stream: " << c_stream << std::endl;
+  } else {
+    std::cout << "Current NPP CUDA Stream: Default Stream (0)" << std::endl;
+  }
+  
+  CHECK_CUDA(cudaStreamCreate(&c_stream));
+  std::cout << "Created CUDA Stream: " << c_stream << std::endl;
+  nppSetStream(c_stream); // 可以多次调用nppSetStream切换不同的CUDA流，NPP函数会在当前设置的流上执行
+  cudaStream_t current_stream = nppGetStream();
+  if(current_stream) {
+    std::cout << "NPP CUDA Stream after setting: " << current_stream << std::endl;
+  } else {
+    std::cout << "NPP CUDA Stream after setting: Default Stream (0)" << std::endl;
+  }
+  NppStreamContext nppStreamCtx;
+  CHECK_NPP(nppGetStreamContext(&nppStreamCtx));
+
+  // 分配device端内存并将数据从host端拷贝到device端
+  unsigned char *d_src_y=nullptr, *d_src_u=nullptr, *d_src_v=nullptr;
+  unsigned char *d_dst_y=nullptr, *d_dst_u=nullptr, *d_dst_v=nullptr;
+  CHECK_CUDA(cudaMalloc(&d_src_y, src_y_size));
+  CHECK_CUDA(cudaMalloc(&d_src_u, src_u_size));
+  CHECK_CUDA(cudaMalloc(&d_src_v, src_v_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_y, dst_y_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_u, dst_u_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_v, dst_v_size));
+  CHECK_CUDA(cudaMemcpy(d_src_y, h_src_y, src_y_size, cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemcpy(d_src_u, h_src_u, src_u_size, cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemcpy(d_src_v, h_src_v, src_v_size, cudaMemcpyHostToDevice));
+
+  // Y resize
+  NppiSize src_size = { src_width, src_height };
+  NppiRect src_roi = { 0, 0, src_width, src_height };
+  int src_step = src_width; // Y分量每行的字节数
+  NppiSize dst_size = { dst_width, dst_height };
+  NppiRect dst_roi = { 0, 0, dst_width, dst_height };
+  int dst_step = dst_width; // Y分量每行的字节数
+  /**
+   * @brief resize image
+   * @param pSrc 源图像数据指针
+   * @param nSrcStep 源图像每行的字节数(stride)
+   * @param oSrcSize 源图像的尺寸
+   * @param oSrcROI 源图像的ROI区域
+   * @param pDst 目标图像数据指针
+   * @param nDstStep 目标图像每行的字节数(stride)
+   * @param oDstSize 目标图像的尺寸
+   * @param oDstROI 目标图像的ROI区域
+   * @param eInterpolationType 插值算法类型
+   */
+  CHECK_NPP(nppiResize_8u_C1R(d_src_y, src_step, src_size, src_roi, d_dst_y, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
+
+  // U resize
+  src_size = { src_width / 2, src_height / 2 };
+  src_roi = { 0, 0, src_width / 2, src_height / 2 };
+  src_step = src_width / 2; // U分量每行的字节数
+  dst_size = { dst_width / 2, dst_height / 2 };
+  dst_roi = { 0, 0, dst_width / 2, dst_height / 2 };
+  dst_step = dst_width / 2; // U分量每行的字节数
+  CHECK_NPP(nppiResize_8u_C1R(d_src_u, src_step, src_size, src_roi, d_dst_u, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
+
+  // V resize
+  CHECK_NPP(nppiResize_8u_C1R(d_src_v, src_step, src_size, src_roi, d_dst_v, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
+
+  // 将数据从device端拷贝回host端并写入输出文件
+  CHECK_CUDA(cudaMemcpy(h_dst_y, d_dst_y, dst_y_size, cudaMemcpyDeviceToHost));
+  CHECK_CUDA(cudaMemcpy(h_dst_u, d_dst_u, dst_u_size, cudaMemcpyDeviceToHost));
+  CHECK_CUDA(cudaMemcpy(h_dst_v, d_dst_v, dst_v_size, cudaMemcpyDeviceToHost));
+  std::ofstream output_file(output_image_path, std::ios::binary);
+  if (!output_file.is_open()) {
+    std::cerr << "Failed to open output file: " << output_image_path << std::endl;
+    return;
+  }
+  output_file.write(reinterpret_cast<char*>(h_dst.data()), h_dst.size());
+
+  // 释放device端内存
+  CHECK_CUDA(cudaFree(d_src_y));
+  CHECK_CUDA(cudaFree(d_src_u));
+  CHECK_CUDA(cudaFree(d_src_v));
+  CHECK_CUDA(cudaFree(d_dst_y));
+  CHECK_CUDA(cudaFree(d_dst_u));
+  CHECK_CUDA(cudaFree(d_dst_v));
+  CHECK_CUDA(cudaStreamDestroy(c_stream));
+}
+
+void npp_crop_example() {
+  // 输入输出图像路径
+  std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+  std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_npp_crop.yuv";
+  
+  // 获取输入图像数据
+  std::ifstream input_file(input_image_path, std::ios::binary);
+  if (!input_file.is_open()) {
+    std::cerr << "Failed to open input file: " << input_image_path << std::endl;
+    return;
+  }
+  std::vector<unsigned char> h_src(std::istreambuf_iterator<char>(input_file), {});
+  input_file.close();
+  std::cout << "Read input image: " << input_image_path << ", size: " << h_src.size() << " bytes" << std::endl;
+
+  // 定义源图像的尺寸和裁剪区域
+  const int src_width = 1080;
+  const int src_height = 1920;
+  const int crop_x = 270;
+  const int crop_y = 480;
+  const int crop_width = 540;
+  const int crop_height = 960;
+  if(crop_x + crop_width > src_width || crop_y + crop_height > src_height) {
+    std::cerr << "Crop region exceeds source image bounds!" << std::endl;
+    return;
+  }
+
+  // 计算YUV420P格式中Y、U、V分量的大小和帧大小
+  const size_t src_y_size = src_width * src_height;
+  const size_t src_u_size = (src_width / 2) * (src_height / 2);
+  const size_t src_v_size = src_u_size;
+  const size_t src_frame_size = src_y_size + src_u_size + src_v_size;
+  if(h_src.size() < src_frame_size) {
+    std::cerr << "Input file size is smaller than expected for YUV420P frame!" << std::endl;
+    return;
+  }
+  const int dst_width = crop_width;
+  const int dst_height = crop_height;
+  const size_t dst_y_size = dst_width * dst_height;
+  const size_t dst_u_size = (dst_width / 2) * (dst_height / 2);
+  const size_t dst_v_size = dst_u_size;
+  const size_t dst_frame_size = dst_y_size + dst_u_size + dst_v_size;
+  std::vector<unsigned char> h_dst(dst_frame_size, 128);
+
+  // host端源图像和目标图像数据指针
+  const unsigned char* h_src_y = h_src.data();
+  const unsigned char* h_src_u = h_src.data() + src_y_size;
+  const unsigned char* h_src_v = h_src.data() + src_y_size + src_u_size;
+  unsigned char* h_dst_y = h_dst.data();
+  unsigned char* h_dst_u = h_dst.data() + dst_y_size;
+  unsigned char* h_dst_v = h_dst.data() + dst_y_size + dst_u_size;
+
+  // 获取当前NPP CUDA流和流上下文信息
+  CHECK_NPP(nppSetStream(0)); // 使用默认流
+
+  // 分配device端内存并将数据从host端拷贝到device端
+  unsigned char *d_src_y=nullptr, *d_src_u=nullptr, *d_src_v=nullptr;
+  unsigned char *d_dst_y=nullptr, *d_dst_u=nullptr, *d_dst_v=nullptr;
+  CHECK_CUDA(cudaMalloc(&d_src_y, src_y_size));
+  CHECK_CUDA(cudaMalloc(&d_src_u, src_u_size));
+  CHECK_CUDA(cudaMalloc(&d_src_v, src_v_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_y, dst_y_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_u, dst_u_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_v, dst_v_size));
+  CHECK_CUDA(cudaMemcpy(d_src_y, h_src_y, src_y_size, cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemcpy(d_src_u, h_src_u, src_u_size, cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemcpy(d_src_v, h_src_v, src_v_size, cudaMemcpyHostToDevice));
+
+  std::cout << "Start cropping Y component..." << std::endl;
+  // Y crop
+  // 用偏移后的源指针+ROI尺寸的方式实现裁剪
+  const int srcY_step = src_width; // Y分量每行的字节数
+  const int dstY_step = dst_width; // Y分量每行的字节数
+  NppiSize y_roi_size = { crop_width, crop_height };
+  const Npp8u* d_src_y_crop = d_src_y + crop_y * srcY_step + crop_x; // 计算裁剪区域的起始地址
+  CHECK_NPP(nppiCopy_8u_C1R(d_src_y_crop, srcY_step, d_dst_y, dstY_step, y_roi_size));
+
+  // 将数据从device端拷贝回host端并写入输出文件
+  CHECK_CUDA(cudaMemcpy(h_dst_y, d_dst_y, dst_y_size, cudaMemcpyDeviceToHost));
+  // CHECK_CUDA(cudaMemcpy(h_dst_u, d_dst_u, dst_u_size, cudaMemcpyDeviceToHost));
+  // CHECK_CUDA(cudaMemcpy(h_dst_v, d_dst_v, dst_v_size, cudaMemcpyDeviceToHost));
+  std::ofstream output_file(output_image_path, std::ios::binary);
+  if (!output_file.is_open()) {
+    std::cerr << "Failed to open output file: " << output_image_path << std::endl;
+    return;
+  }
+  output_file.write(reinterpret_cast<char*>(h_dst.data()), h_dst.size());
+
+  // 释放device端内存
+  CHECK_CUDA(cudaFree(d_src_y));
+  CHECK_CUDA(cudaFree(d_src_u));
+  CHECK_CUDA(cudaFree(d_src_v));
+  CHECK_CUDA(cudaFree(d_dst_y));
+  CHECK_CUDA(cudaFree(d_dst_u));
+  CHECK_CUDA(cudaFree(d_dst_v));
+
+}
+
+int main() {
+  std::cout << "=============== NPP Sample Example ===============" << std::endl;
+  npp_sample_example();
+  std::cout << "=============== NPP Resize Example ===============" << std::endl;
+  npp_resize_example();
+  std::cout << "=============== NPP Crop Example ===============" << std::endl;
+  npp_crop_example();
+
   return 0;
 }

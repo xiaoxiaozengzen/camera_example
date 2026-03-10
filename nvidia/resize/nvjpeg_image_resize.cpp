@@ -14,6 +14,10 @@
 #include <nvjpeg.h>
 #include <nppi_geometry_transforms.h>
 
+/**
+ * jpeg的图像生成过程：
+ * 1. 原始的RGB图像
+ */
 
 #define CHECK_CUDA(call)                                                        \
     {                                                                           \
