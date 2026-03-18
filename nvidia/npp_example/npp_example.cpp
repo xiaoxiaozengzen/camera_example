@@ -47,14 +47,55 @@
  */
 
 void npp_sample_example() {
-  cudaStream_t stream = nppGetStream();
-  if(stream) {
-    std::cout << "Current NPP CUDA Stream: " << stream << std::endl;
+  // 创建stream，主要给带ctx参数的NPP函数使用，普通的NPP函数会在当前设置的流上执行
+  cudaStream_t stream = nullptr;
+  unsigned int flags;
+  CHECK_CUDA(cudaStreamGetFlags(stream, &flags));
+  if(flags == cudaStreamNonBlocking) {
+    std::cout << "Stream is non-blocking" << std::endl;
+  } else if (flags == cudaStreamDefault) {
+    std::cout << "Stream is default" << std::endl;
+  } else {
+    std::cout << "Stream has unknown flags: " << flags << std::endl;
+  }
+  int priorityHigh, priorityLow;
+  cudaDeviceGetStreamPriorityRange(&priorityLow, &priorityHigh);
+  cudaStreamCreateWithPriority(&stream, cudaStreamNonBlocking, priorityHigh);
+
+  // 查看当前Npp所属的CUDA流
+  cudaStream_t npp_get_stream = nppGetStream();
+  if(npp_get_stream) {
+    std::cout << "Current NPP CUDA Stream: " << npp_get_stream << std::endl;
   } else {
     std::cout << "Current NPP CUDA Stream: Default Stream (0)" << std::endl;
   }
 
+  /**
+   * @brief 设置NPP使用指定的CUDA流，之后调用的NPP函数会在这个流上执行
+   * @note 可以多次调用nppSetStream切换不同的CUDA流，NPP函数会在当前设置的流上执行
+   */
+  nppSetStream(stream);
+  npp_get_stream = nppGetStream();
+  if(npp_get_stream) {
+    std::cout << "NPP CUDA Stream after setting: " << npp_get_stream << std::endl;
+  } else {
+    std::cout << "NPP CUDA Stream after setting: Default Stream (0)" << std::endl;
+  }
+  
+  // 设置会默认的CUDA流，等同于nppSetStream(0)
+  nppSetStream(0);
+  npp_get_stream = nppGetStream();
+  if(npp_get_stream) {
+    std::cout << "NPP CUDA Stream after resetting to default: " << npp_get_stream << std::endl;
+  } else {
+    std::cout << "NPP CUDA Stream after resetting to default: Default Stream (0)" << std::endl;
+  }
+
+  // 获取当前默认的NPP管理的CUDA流上下文信息
   NppStreamContext nppStreamCtx;
+  /**
+   * @brief 获取当前NPP管理的cudastram context信息，即调用了nppSetStream后所设置的cudastream
+   */
   CHECK_NPP(nppGetStreamContext(&nppStreamCtx));
   std::cout << "NPP Stream Context:" << std::endl;
   if(nppStreamCtx.hStream) {
@@ -68,6 +109,33 @@ void npp_sample_example() {
   std::cout << "  Shared Memory Per Block: " << nppStreamCtx.nSharedMemPerBlock << " bytes" << std::endl;
   std::cout << "  Compute Capability: " << nppStreamCtx.nCudaDevAttrComputeCapabilityMajor << "." << nppStreamCtx.nCudaDevAttrComputeCapabilityMinor << std::endl;
   std::cout << "  Stream Flags: " << nppStreamCtx.nStreamFlags << std::endl;
+
+  // 创建新的nppStreamContext并设置一个新的CUDA流
+  NppStreamContext newNppStreamCtx;
+  CHECK_NPP(nppGetStreamContext(&newNppStreamCtx));
+  CHECK_CUDA(cudaGetDevice(&newNppStreamCtx.nCudaDeviceId));
+  struct cudaDeviceProp devProp;
+  cudaGetDeviceProperties(&devProp, newNppStreamCtx.nCudaDeviceId);
+  newNppStreamCtx.hStream = stream;
+  newNppStreamCtx.nMultiProcessorCount = devProp.multiProcessorCount;
+  newNppStreamCtx.nMaxThreadsPerBlock = devProp.maxThreadsPerBlock;
+  newNppStreamCtx.nSharedMemPerBlock = devProp.sharedMemPerBlock;
+  newNppStreamCtx.nCudaDevAttrComputeCapabilityMajor = devProp.major;
+  newNppStreamCtx.nCudaDevAttrComputeCapabilityMinor = devProp.minor;
+  CHECK_CUDA(cudaStreamGetFlags(stream, &newNppStreamCtx.nStreamFlags));
+  std::cout << "New NPP Stream Context:" << std::endl;
+  if(newNppStreamCtx.hStream) {
+    std::cout << "  CUDA Stream: " << newNppStreamCtx.hStream << std::endl;
+  } else {
+    std::cout << "  CUDA Stream: Default Stream (0)" << std::endl;
+  }
+  std::cout << "  CUDA Device: " << newNppStreamCtx.nCudaDeviceId << std::endl;
+  std::cout << "  MultiProcessor Count: " << newNppStreamCtx.nMultiProcessorCount << std::endl;
+  std::cout << "  Max Threads Per Block: " << newNppStreamCtx.nMaxThreadsPerBlock << std::endl;
+  std::cout << "  Shared Memory Per Block: " << newNppStreamCtx.nSharedMemPerBlock << " bytes" << std::endl;
+  std::cout << "  Compute Capability: " << newNppStreamCtx.nCudaDevAttrComputeCapabilityMajor << "." << newNppStreamCtx.nCudaDevAttrComputeCapabilityMinor << std::endl;
+  std::cout << "  Stream Flags: " << newNppStreamCtx.nStreamFlags << std::endl;
+
 
   // 生成一个简单的RGB图像
   const int w = 8, h = 6;
@@ -86,9 +154,12 @@ void npp_sample_example() {
       h_src[idx + 2] = (unsigned char)( (x+y) * 5 ); // B
     }
 
-  unsigned char *d_src=nullptr, *d_dst=nullptr;
+  unsigned char *d_src=nullptr;
+  unsigned char *d_dst=nullptr;
+  unsigned char *d_dst_with_ctx=nullptr;
   CHECK_CUDA(cudaMalloc(&d_src, h_src.size()));
   CHECK_CUDA(cudaMalloc(&d_dst, h_dst.size()));
+  CHECK_CUDA(cudaMalloc(&d_dst_with_ctx, h_dst.size()));
   CHECK_CUDA(cudaMemcpy(d_src, h_src.data(), h_src.size(), cudaMemcpyHostToDevice));
 
   NppiSize roi = { w, h };
@@ -111,34 +182,23 @@ void npp_sample_example() {
    */
   CHECK_NPP(nppiCopy_8u_C3R(d_src, srcStep, d_dst, dstStep, roi));
 
+  // 使用带ctx参数的版本在指定的CUDA流上执行拷贝操作
+  CHECK_NPP(nppiCopy_8u_C3R_Ctx(d_src, srcStep, d_dst_with_ctx, dstStep, roi, newNppStreamCtx));
+
   // 将数据从device拷贝回host并打印部分结果
   CHECK_CUDA(cudaMemcpy(h_dst.data(), d_dst, h_dst.size(), cudaMemcpyDeviceToHost));
   std::cout << "After nppiCopy, pixel (0,1): R G B = "
             << int(h_dst[3]) << " " << int(h_dst[4]) << " " << int(h_dst[5]) << std::endl;
 
-  NppiSize mask = {3, 3};
-  NppiPoint anchor = {1, 1}; // center of the kernel
-  
-  /**
-   * @brief 对图像执行盒式均值滤波，用指定大小的矩形核对每个像素做局部平均，达到模糊/降噪效果
-   * @param pSrc 源图像数据指针
-   * @param nSrcStep 源图像每行的字节数（stride）
-   * @param pDst 目标图像数据指针
-   * @param nDstStep 目标图像每行的字节数（stride）
-   * @param oSizeROI 图像的宽度区域
-   * @param oMaskSize 矩形核的大小
-   * @param oAnchor 矩形核的锚点
-   *
-   * @note 矩形核的数值均为1/(mask.width * mask.height)
-   */
-  CHECK_NPP(nppiFilterBox_8u_C3R(d_src, srcStep, d_dst, dstStep, roi, mask, anchor));
+  CHECK_CUDA(cudaMemcpy(h_dst.data(), d_dst_with_ctx, h_dst.size(), cudaMemcpyDeviceToHost));
+  std::cout << "After nppiCopy with ctx, pixel (0,1): R G B = "
+            << int(h_dst[3]) << " " << int(h_dst[4]) << " " << int(h_dst[5]) << std::endl;
 
-  CHECK_CUDA(cudaMemcpy(h_dst.data(), d_dst, h_dst.size(), cudaMemcpyDeviceToHost));
-  std::cout << "After box filter, pixel (0,0): R G B = "
-            << int(h_dst[0]) << " " << int(h_dst[1]) << " " << int(h_dst[2]) << std::endl;
-
+  // 释放device端内存和CUDA流
   cudaFree(d_src);
   cudaFree(d_dst);
+  cudaFree(d_dst_with_ctx);
+  cudaStreamDestroy(stream);
 }
 
 void npp_resize_example() {
@@ -184,26 +244,6 @@ void npp_resize_example() {
   unsigned char* h_dst_y = h_dst.data();
   unsigned char* h_dst_u = h_dst.data() + dst_y_size;
   unsigned char* h_dst_v = h_dst.data() + dst_y_size + dst_u_size;
-
-  cudaStream_t c_stream = nullptr;
-  c_stream = nppGetStream();
-  if(c_stream) {
-    std::cout << "Current NPP CUDA Stream: " << c_stream << std::endl;
-  } else {
-    std::cout << "Current NPP CUDA Stream: Default Stream (0)" << std::endl;
-  }
-  
-  CHECK_CUDA(cudaStreamCreate(&c_stream));
-  std::cout << "Created CUDA Stream: " << c_stream << std::endl;
-  nppSetStream(c_stream); // 可以多次调用nppSetStream切换不同的CUDA流，NPP函数会在当前设置的流上执行
-  cudaStream_t current_stream = nppGetStream();
-  if(current_stream) {
-    std::cout << "NPP CUDA Stream after setting: " << current_stream << std::endl;
-  } else {
-    std::cout << "NPP CUDA Stream after setting: Default Stream (0)" << std::endl;
-  }
-  NppStreamContext nppStreamCtx;
-  CHECK_NPP(nppGetStreamContext(&nppStreamCtx));
 
   // 分配device端内存并将数据从host端拷贝到device端
   unsigned char *d_src_y=nullptr, *d_src_u=nullptr, *d_src_v=nullptr;
@@ -269,7 +309,6 @@ void npp_resize_example() {
   CHECK_CUDA(cudaFree(d_dst_y));
   CHECK_CUDA(cudaFree(d_dst_u));
   CHECK_CUDA(cudaFree(d_dst_v));
-  CHECK_CUDA(cudaStreamDestroy(c_stream));
 }
 
 void npp_crop_example() {
