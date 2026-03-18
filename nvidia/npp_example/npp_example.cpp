@@ -370,6 +370,101 @@ void npp_crop_example() {
 
 }
 
+void npp_convert_example() {
+  // 生成一个简单的RGB图像
+  const int width = 4;
+  const int height = 4;
+  const int channels = 3;
+  const int src_step = width * channels * sizeof(Npp8u); // 8-bit unsigned每像素3字节
+  const int dst_step = width * channels * sizeof(Npp32f); // 32-bit float每像素12字节
+  std::vector<Npp8u> h_src = {
+    11, 22, 33,   255, 0, 0,   0, 255, 0,   0, 0, 255,
+    255, 255, 0,   255, 0, 255,   0, 255, 255,   255, 255, 255,
+    128, 128, 128,   64, 64, 64,   192, 192, 192,   32, 32, 32,
+    16, 16, 16,   240, 240, 240,   8, 8, 8,   248, 248, 248
+  };
+  std::vector<Npp32f> h_dst(width * height * channels, 0.0f);
+
+  // 分配device端内存并将数据从host端拷贝到device端
+  Npp8u* d_src = nullptr;
+  Npp32f* d_dst = nullptr;
+  CHECK_CUDA(cudaMalloc(&d_src, h_src.size() * sizeof(Npp8u)));
+  CHECK_CUDA(cudaMalloc(&d_dst, h_dst.size() * sizeof(Npp32f)));
+  CHECK_CUDA(cudaMemcpy(d_src, h_src.data(), h_src.size() * sizeof(Npp8u), cudaMemcpyHostToDevice));
+  NppiSize roi_size = { width, height };
+
+  /**
+   * @brief 将图像的像素数据类型做转换，例如从8-bit unsigned转换为32-bit float
+   * @param pSrc 源图像数据指针
+   * @param nSrcStep 源图像每行的字节数(stride)
+   * @param pDst 目标图像数据指针
+   * @param nDstStep 目标图像每行的字节数(stride)
+   * @param oSizeROI roi区域的尺寸
+   */
+  CHECK_NPP(nppiConvert_8u32f_C3R(d_src, src_step, d_dst, dst_step, roi_size));
+
+  // 将数据从device端拷贝回host端并打印部分结果
+  CHECK_CUDA(cudaMemcpy(h_dst.data(), d_dst, h_dst.size() * sizeof(Npp32f), cudaMemcpyDeviceToHost));
+  std::cout << "After nppiConvert, pixel (0,0): R G B = "
+            << h_dst[0] << " " << h_dst[1] << " " << h_dst[2] << std::endl;
+
+  // 释放device端内存
+  CHECK_CUDA(cudaFree(d_src));
+  CHECK_CUDA(cudaFree(d_dst));
+
+}
+
+void npp_mulc_example() {
+  // 生成一个简单的RGB图像
+  const int width = 4;
+  const int height = 4;
+  const int channels = 3;
+  const int src_step = width * channels * sizeof(Npp32f); // 32-bit float每像素12字节
+  std::vector<Npp32f> h_src = {
+    1.0f, 2.0f, 3.0f,
+    4.0f, 5.0f, 6.0f,
+    7.0f, 8.0f, 9.0f,
+    10.0f, 11.0f, 12.0f,
+    13.0f, 14.0f, 15.0f,
+    16.0f, 17.0f, 18.0f,
+    19.0f, 20.0f, 21.0f,
+    22.0f, 23.0f, 24.0f
+  };
+  std::vector<Npp32f> h_dst(width * height * channels, 0.0f);
+
+  // 分配device端内存并将数据从host端拷贝到device端
+  Npp32f* d_src = nullptr;
+  Npp32f* d_dst = nullptr;
+  CHECK_CUDA(cudaMalloc(&d_src, h_src.size() * sizeof(Npp32f)));
+  CHECK_CUDA(cudaMalloc(&d_dst, h_dst.size() * sizeof(Npp32f)));
+  CHECK_CUDA(cudaMemcpy(d_src, h_src.data(), h_src.size() * sizeof(Npp32f), cudaMemcpyHostToDevice));
+  NppiSize roi_size = { width, height };
+  Npp32f alpha = 2.0f;
+  std::vector<Npp32f> h_constants = { alpha * 2.0f, alpha, alpha * 0.5f }; // 每个通道的常数因子
+
+  /**
+   * @brief 对图像的每个像素值乘以一个常数因子，例如对图像进行亮度调整
+   * @param pSrc 源图像数据指针
+   * @param nSrcStep 源图像每行的字节数(stride)
+   * @param aConstants 固定大小常数因子数组指针，长度等于图像的通道数
+   * @param pDst 目标图像数据指针
+   * @param nDstStep 目标图像每行的字节数(stride)
+   * @param oSizeROI roi区域的尺寸
+   *
+   * @note MulC其实是Mul跟Constant的缩写
+   */
+   CHECK_NPP(nppiMulC_32f_C3R(d_src, src_step, h_constants.data(), d_dst, src_step, roi_size));
+
+  // 将数据从device端拷贝回host端并打印部分结果
+  CHECK_CUDA(cudaMemcpy(h_dst.data(), d_dst, h_dst.size() * sizeof(Npp32f), cudaMemcpyDeviceToHost));
+  std::cout << "After nppiMulC, pixel (0,0): R G B = "
+            << h_dst[0] << " " << h_dst[1] << " " << h_dst[2] << std::endl;
+  
+  // 释放device端内存
+  CHECK_CUDA(cudaFree(d_src));
+  CHECK_CUDA(cudaFree(d_dst));
+}
+
 int main() {
   std::cout << "=============== NPP Sample Example ===============" << std::endl;
   npp_sample_example();
@@ -377,6 +472,10 @@ int main() {
   npp_resize_example();
   std::cout << "=============== NPP Crop Example ===============" << std::endl;
   npp_crop_example();
+  std::cout << "=============== NPP Convert Example ===============" << std::endl;
+  npp_convert_example();
+  std::cout << "=============== NPP MulC Example ===============" << std::endl;
+  npp_mulc_example();
 
   return 0;
 }
