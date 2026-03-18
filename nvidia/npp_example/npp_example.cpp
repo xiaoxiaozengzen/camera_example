@@ -52,11 +52,11 @@ void npp_sample_example() {
   unsigned int flags;
   CHECK_CUDA(cudaStreamGetFlags(stream, &flags));
   if(flags == cudaStreamNonBlocking) {
-    std::cout << "Stream is non-blocking" << std::endl;
+    std::cout << "Stream flags is non-blocking" << std::endl;
   } else if (flags == cudaStreamDefault) {
-    std::cout << "Stream is default" << std::endl;
+    std::cout << "Stream flags is default" << std::endl;
   } else {
-    std::cout << "Stream has unknown flags: " << flags << std::endl;
+    std::cout << "Stream flags has unknown flags: " << flags << std::endl;
   }
   int priorityHigh, priorityLow;
   cudaDeviceGetStreamPriorityRange(&priorityLow, &priorityHigh);
@@ -68,6 +68,14 @@ void npp_sample_example() {
     std::cout << "Current NPP CUDA Stream: " << npp_get_stream << std::endl;
   } else {
     std::cout << "Current NPP CUDA Stream: Default Stream (0)" << std::endl;
+    CHECK_CUDA(cudaStreamGetFlags(npp_get_stream, &flags));
+    if(flags == cudaStreamNonBlocking) {
+      std::cout << "npp_get_stream flags is non-blocking" << std::endl;
+    } else if (flags == cudaStreamDefault) {
+      std::cout << "npp_get_stream flags is default" << std::endl;
+    } else {
+      std::cout << "npp_get_stream flags has unknown flags: " << flags << std::endl;
+    }
   }
 
   /**
