@@ -117,6 +117,9 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
 {
     // 创建通道格式描述符，这里yuv各分量均为8位无符号整数
     cudaChannelFormatDesc chDesc = cudaCreateChannelDesc(8,0,0,0,cudaChannelFormatKindUnsigned);
+    std::cout << "Channel Format Desc: x=" << chDesc.x << ", y=" << chDesc.y
+              << ", z=" << chDesc.z << ", w=" << chDesc.w
+              << ", f=" << static_cast<int>(chDesc.f) << std::endl;
 
     // allocate cudaArrays
     cudaArray_t arrY, arrU, arrV;
@@ -139,6 +142,10 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
      * @note pitch也用于计算二维数组数据的地址：dst_ptr = base_ptr + row * pitch + col
      */
     CHECK_CUDA(cudaMallocPitch(&dst_ptr, &dst_pitch, dst_width, dst_height));
+    std::cout << "Allocated pitched memory: ptr=" << static_cast<void*>(dst_ptr)
+              << ", pitch=" << dst_pitch
+              << ", width=" << dst_width
+              << ", height=" << dst_height << std::endl;
 
     /**
      * @brief 将主机内存中src指向的矩阵(height行，每行width字节)复制到cudaArray中。
@@ -228,10 +235,19 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
 
     /**
      * @brief 纹理对象
+     * typedef __device_builtin__ unsigned long long cudaTextureObject_t
      */
     cudaTextureObject_t texY=0, texU=0, texV=0;
+
     // Y
     resDesc.res.array.array = arrY;
+    /**
+     * @brief 创建一个纹理对象
+     * @param pTexObject 返回创建的纹理对象
+     * @param pResDesc 纹理资源描述符，描述了需要进行纹理的数据源和相关信息
+     * @param pTexDesc 纹理描述符，描述了纹理对象的采样和访问方式
+     * @param pResViewDesc 资源视图描述符，描述了纹理对象的资源视图信息（如mipmap级别、数组层等），如果不使用则为nullptr
+     */
     CHECK_CUDA(cudaCreateTextureObject(&texY, &resDesc, &texDesc, nullptr));
     // U
     resDesc.res.array.array = arrU;
@@ -299,6 +315,13 @@ void cropYUV420() {
         return;
     }
     infile.seekg(0, std::ios::beg);
+    std::cout << "Input YUV file: " << input_yuv << std::endl;
+    std::cout << "Output YUV file: " << output_yuv << std::endl;
+    std::cout << "Frame dimensions: " << width << "x" << height << std::endl;
+    std::cout << "Crop rectangle: (" << crop_x << ", " << crop_y << ", " << crop_w << ", " << crop_h << ")" << std::endl;
+    std::cout << "Input YUV file size: " << file_size << " bytes" << std::endl;
+    std::cout << "Expected frame size: " << frame_size << " bytes" << std::endl;
+
     std::vector<unsigned char> h_y(y_size);
     std::vector<unsigned char> h_u(uv_size);
     std::vector<unsigned char> h_v(uv_size);
