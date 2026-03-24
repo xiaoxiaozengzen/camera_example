@@ -29,6 +29,18 @@ target_include_directories(cuda_stream_event PRIVATE ${CUDAToolkit_INCLUDE_DIRS}
 target_link_directories(cuda_stream_event PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
 target_link_libraries(cuda_stream_event PUBLIC CUDA::cudart)
 
+set(CUDA_MEMCPY_ASYNC "cuda_memcpy_async/cuda_memcpy_async.cu")
+add_executable(cuda_memcpy_async ${CUDA_MEMCPY_ASYNC})
+target_include_directories(cuda_memcpy_async PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_directories(cuda_memcpy_async PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
+target_link_libraries(cuda_memcpy_async PUBLIC CUDA::cudart)
+
+set(CUDA_TEXTURE "cuda_texture/cuda_texture.cu")
+add_executable(cuda_texture ${CUDA_TEXTURE})
+target_include_directories(cuda_texture PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_directories(cuda_texture PUBLIC $ENV{CUDAToolkit_ROOT}/lib64)
+target_link_libraries(cuda_texture PUBLIC CUDA::cudart)
+
 set(NVCODEV_DIR "/mnt/workspace/cgz_workspace/ThreeParty/Video_Codec_SDK_13.0.19")
 file(GLOB NV_DECODE_SRCS "nv_decode/*.cpp")
 add_executable(nv_video_decode ${NV_DECODE_SRCS})
