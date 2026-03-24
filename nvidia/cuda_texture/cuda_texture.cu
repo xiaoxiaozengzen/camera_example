@@ -81,15 +81,22 @@ __global__ void cropYUV_kernel(cudaTextureObject_t texY, cudaTextureObject_t tex
                                unsigned char* outY, unsigned char* outU, unsigned char* outV,
                                int in_w, int in_h, int crop_x, int crop_y, int crop_w, int crop_h)
 {
+    // crop rectangle: (crop_x, crop_y, crop_w, crop_h)中的像素(x, y)坐标
+    // 即表示当前线程负责输出裁剪后图像中坐标(x, y)处的像素值
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= crop_w || y >= crop_h) return;
 
     // Y plane: 1:1
-    int src_x = crop_x + x;
-    int src_y = crop_y + y;
+    int src_x = crop_x + x; // 计算裁剪后图像中坐标(x, y)对应的原图像中的坐标(src_x, src_y)
+    int src_y = crop_y + y; // 输出图像的(0,0)对应原图像的(crop_x, crop_y)，以此类推
     /**
-     * @brief 在device上从纹理对象堆区一个texel值
+     * @brief 在device上从纹理对象中按照坐标读取一个texel(纹理元素)，并返回对应的值
+     * @param texObject 纹理对象
+     * @param x 纹理坐标的x分量，类型浮点数
+     * @param y 纹理坐标的y分量，类型浮点数
+     * @return 返回纹理坐标(x, y)处的texel值，类型取决于纹理描述符中的readMode字段
+     *
      * @note 因为readMode是cudaReadModeElementType，所以返回值类型还是unsigned char
      * @note 因为normalizedCoords是0，所以坐标系还是像素坐标系，未归一化
      * @note +0.5f是因为像素/texel的几何中心是在坐标(x+0.5, y+0.5)处。保证点采样和线性插值的一致性
@@ -123,6 +130,18 @@ void cropYUV420_using_cudaArray(const unsigned char* h_y, const unsigned char* h
 
     // allocate cudaArrays
     cudaArray_t arrY, arrU, arrV;
+    /**
+     * @brief 分配一个二维的cudaArray，适用于纹理对象的内存资源
+     * @param array 返回分配的cudaArray地址
+     * @param desc 纹理通道格式描述符，cudaChannelFormatDesc类型
+     * @param width 数组的宽度（以元素为单位）
+     * @param height 数组的高度（以元素为单位）
+     * @param flags 分配标志，通常为0
+     *              - cudaArrayDefault：0，默认分配方式，适用于大多数情况
+     *              - cudaArraySurfaceLoadStore：分配的cudaArray支持surface load/store操作，适用于surface对象
+     *              - cudaArrayTextureGather：分配的cudaArray支持纹理采样器的gather操作，适用于纹理对象
+     *              - cudaArraySparse：分配稀疏cudaArray，适用于需要大内存但不连续访问的情况
+     */
     CHECK_CUDA(cudaMallocArray(&arrY, &chDesc, width, height));
     CHECK_CUDA(cudaMallocArray(&arrU, &chDesc, width/2, height/2));
     CHECK_CUDA(cudaMallocArray(&arrV, &chDesc, width/2, height/2));
@@ -349,9 +368,104 @@ void cropYUV420() {
     outfile.close();
 }
 
+/************************************ 2.cudaSurfaceObject ************************************/
+__global__ void writeSurfaceKernel(cudaSurfaceObject_t surfObj, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    unsigned char value = static_cast<unsigned char>((x + y) & 0xFF);
+
+    /**
+     * @brief 在kernel中按照坐标写入一个texel(纹理元素)值到surface对象(通常绑定一个cudaArray)
+     * @param  value 要写入的值，类型取决于surface对象绑定的资源的通道格式描述符
+     * @param surfObj 目标surface对象
+     * @param x x分量，类型整数，表示改行内偏移的字节数（以字节为单位），通常是列索引乘以每个元素的字节数
+     * @param y y分量，类型整数，表示第几行
+     * @param mode 写入模式，默认为0，表示默认写入方式
+     */
+    surf2Dwrite(value, surfObj, x * static_cast<int>(sizeof(unsigned char)), y);
+}
+
+void writeSurfaceExample() {
+    const int width = 8;
+    const int height = 6;
+
+    // 1. 创建单通道 8-bit 的 channel 描述
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<unsigned char>();
+
+    // 2. 分配支持 surface load/store 的 cudaArray
+    cudaArray_t cuArray = nullptr;
+    CHECK_CUDA(cudaMallocArray(
+        &cuArray,
+        &channelDesc,
+        width,
+        height,
+        cudaArraySurfaceLoadStore
+    ));
+
+    // 3. 配置资源描述符
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = cuArray;
+
+    // 4. 创建 surface object
+    /**
+     * @brief surface对象，用于在CUDA内核中进行surface load/store操作的抽象句柄
+     * typedef __device_builtin__ unsigned long long cudaSurfaceObject_t
+     * @note 于texture对象区别：
+     *       - texture更偏向读，而surface更偏向写（虽然两者都支持读写，但在性能和功能上有一些差异）
+     */
+    cudaSurfaceObject_t surfObj = 0;
+    /**
+     * @brief 创建一个surface对象
+     * @param pSurfObject 返回创建的surface对象
+     * @param pResDesc 资源描述符，描述了需要进行surface load/store的数据源和相关信息
+     */
+    CHECK_CUDA(cudaCreateSurfaceObject(&surfObj, &resDesc));
+
+    // 5. 启动 kernel，往 surface 写数据
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x,
+              (height + block.y - 1) / block.y);
+
+    writeSurfaceKernel<<<grid, block>>>(surfObj, width, height);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // 6. 从 cudaArray 拷回主机
+    std::vector<unsigned char> hostData(width * height);
+    CHECK_CUDA(cudaMemcpy2DFromArray(
+        hostData.data(),                  // dst
+        width * sizeof(unsigned char),    // dpitch
+        cuArray,                          // src array
+        0, 0,                             // wOffset, hOffset
+        width * sizeof(unsigned char),    // width in bytes
+        height,                           // height
+        cudaMemcpyDeviceToHost
+    ));
+
+    // 7. 打印结果
+    std::cout << "Surface write result:\n";
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            std::cout << static_cast<int>(hostData[y * width + x]) << "\t";
+        }
+        std::cout << "\n";
+    }
+
+    // 8. 清理资源
+    CHECK_CUDA(cudaDestroySurfaceObject(surfObj));
+    CHECK_CUDA(cudaFreeArray(cuArray));
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "===================== cropYUV420 =====================" << std::endl;
     cropYUV420();
-    
+    std::cout << "===================== writeSurfaceExample =====================" << std::endl;
+    writeSurfaceExample();
+
     return 0;
 }
