@@ -203,6 +203,7 @@ void cuda_memcpy_async() {
      * @param stream  输入参数，要执行内存释放的stream
      */
     CHECK_CUDA(cudaFreeAsync(d_data_async, stream));
+    CHECK_CUDA(cudaStreamSynchronize(stream));
     CHECK_CUDA(cudaStreamDestroy(stream));
     data_gpu = nullptr;
 }
