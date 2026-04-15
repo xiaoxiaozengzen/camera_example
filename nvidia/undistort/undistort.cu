@@ -59,16 +59,27 @@ __device__ void __forceinline__ GetRGBPixel(uint8_t* yuv_data, int32_t x, int32_
     int32_t DB = 0;
 
     /**
-     * 下面的YUV转RGB的计算公式采用了整数近似+位移缩放的搞笑实现方式，目的是为了在GPU上高效计算，避免使用浮点数运算。
+     * YUV转RGB的计算公式(ITU-R BT.601标准)：
+     * R = 1.164 * (Y - 16) + 1.596 * (V - 128)
+     * G = 1.164 * (Y - 16) - 0.813 * (V - 128) - 0.391 * (U - 128)
+     * B = 1.164 * (Y - 16) + 2.018 * (U - 128)
+     *
+     * 下面的YUV转RGB的计算公式采用了整数近似+位移缩放的高效实现方式，
+     * 目的是为了在GPU上高效计算，避免使用浮点数运算
+     * 使用缩放因子2^20来近似浮点数乘法：
+     * 1.164近似1220542/2^20，1.596近似1673527/2^20，0.813近似852492/2^20
+     * 0.391近似411041/2^20，2.018近似2114977/2^20
+     *
      */
     Y_Item = 1220542 * ((Y - 16)<=0? 0 : (Y - 16)>255? 255 : (Y - 16)); // Y分量的缩放和偏移，近似乘以1.164
     DR = 1673527 * (V - 128);
-    DG = 852492 * (V - 128) - 411041 * (U - 128);
+    DG = 852492 * (V - 128) + 411041 * (U - 128);
     DB = 2114977 * (U - 128);
 
-    int16_t R = (int16_t)((Y_Item + DR + (1 << 19)) >> 20); // 近似除以1.164
-    int16_t G = (int16_t)((Y_Item - DG + (1 << 19)) >> 20); // 近似除以1.164
-    int16_t B = (int16_t)((Y_Item + DB + (1 << 19)) >> 20); // 近似除以1.164
+    // 1<<19是为了实现四舍五入，右移20位相当于除以2^20，得到最终的RGB值
+    int16_t R = (int16_t)((Y_Item + DR + (1 << 19)) >> 20);
+    int16_t G = (int16_t)((Y_Item - DG + (1 << 19)) >> 20);
+    int16_t B = (int16_t)((Y_Item + DB + (1 << 19)) >> 20);
 
     rgb_pixel.x = R < 0 ? 0 : (R > 255 ? 255 : R); // 将结果限制在0-255范围内
     rgb_pixel.y = G < 0 ? 0 : (G > 255 ? 255 : G);
@@ -82,10 +93,10 @@ __device__ void __forceinline__ UndistortPoint(float& u_norm, float& v_norm, con
     float k3 = calib_param[6];
     float k4 = calib_param[7];
 
-    // 基于OpenCV的畸变模型，计算畸变校正后的归一化坐标
+    // 基于OpenCV的畸变模型，将归一化坐标从理想(去畸变)映射到实际(有畸变)坐标的过程：
     // 1.计算半径
     float r = sqrt(u_norm * u_norm + v_norm * v_norm);
-    // 2.计算极角：改点与光轴的夹角
+    // 2.计算极角：点与光轴的夹角
     float theta = atan(r);
     // 3.计算极角的高次幂
     float theta2 = theta * theta;
@@ -148,8 +159,8 @@ __device__ void __forceinline__ GetRGBDataKernel(uint8_t* yuv_data, const int32_
     // 可以这样理解：
     // u/dst_image_width = (u_src_undistorted - roi_x) / roi_width
     // v/dst_image_height = (v_src_undistorted - roi_y) / roi_height
-    int32_t u_src_undistorted = (u * 1.0f * roi_x / dst_image_width) + roi_x;
-    int32_t v_src_undistorted = (v * 1.0f * roi_y / dst_image_height) + roi_y;
+    int32_t u_src_undistorted = (u * 1.0f * roi_width / dst_image_width) + roi_x;
+    int32_t v_src_undistorted = (v * 1.0f * roi_height / dst_image_height) + roi_y;
 
     int valid_width = dst_image_width;
     int valid_height = dst_image_height;
@@ -228,6 +239,7 @@ void undistort() {
     input_file.seekg(0, std::ios::beg);
     input_file.read(reinterpret_cast<char*>(yuv_data.data()), yuv_size);
     input_file.close();
+    std::cout << "Input image size: " << file_size << " bytes" << std::endl;
 
     // 设置输入输出图像数据的GPU内存
     uint8_t* yuv_data_gpu = nullptr;
@@ -245,12 +257,15 @@ void undistort() {
     int32_t* roi_param_gpu = nullptr;
     CHECK_CUDA(cudaMalloc(&roi_param_gpu, sizeof(roi_param)));
     CHECK_CUDA(cudaMemcpy(roi_param_gpu, roi_param, sizeof(roi_param), cudaMemcpyHostToDevice));
+    std::cout << "ROI: image_width=" << roi_param[0] << ", image_height=" << roi_param[1] << std::endl;
+    std::cout << "ROI: x=" << roi_param[2] << ", y=" << roi_param[3] << ", width=" << roi_param[4] << ", height=" << roi_param[5] << std::endl;
 
     // 设置输出图像的尺寸
     int32_t dst_image_size[2] = {image_width / 2, image_height / 2}; // 输出图像的尺寸
     int32_t* dst_image_size_gpu = nullptr;
     CHECK_CUDA(cudaMalloc(&dst_image_size_gpu, sizeof(dst_image_size)));
     CHECK_CUDA(cudaMemcpy(dst_image_size_gpu, dst_image_size, sizeof(dst_image_size), cudaMemcpyHostToDevice));
+    std::cout << "Output image size: width=" << dst_image_size[0] << ", height=" << dst_image_size[1] << std::endl;
 
     // 设置相机内参和畸变参数
     float calib_param[12] = {1906.6, 1906.18, 1923.26, 1022.45, -0.0299548, -0.00364585, -0.00155829, 0.00104736}; // fx, fy, cx, cy, k1, k2, k3, k4
@@ -258,23 +273,30 @@ void undistort() {
     float fy_scale = 1.0;
     float cx_offset = 0.0;
     float cy_offset = 0.0;
-    calib_param[8] = fx_scale;
-    calib_param[9] = fy_scale;
+    calib_param[8] = calib_param[0] / fx_scale;
+    calib_param[9] = calib_param[1] / fy_scale;
     calib_param[10] = cx_offset;
     calib_param[11] = cy_offset;
     float* calib_param_gpu = nullptr;
     CHECK_CUDA(cudaMalloc(&calib_param_gpu, sizeof(calib_param)));
     CHECK_CUDA(cudaMemcpy(calib_param_gpu, calib_param, sizeof(calib_param), cudaMemcpyHostToDevice));
+    std::cout << "Camera intrinsics: fx=" << calib_param[0] << ", fy=" << calib_param[1] << ", cx=" << calib_param[2] << ", cy=" << calib_param[3] << std::endl;
+    std::cout << "Distortion coefficients: k1=" << calib_param[4] << ", k2=" << calib_param[5] << ", k3=" << calib_param[6] << ", k4=" << calib_param[7] << std::endl;
+    std::cout << "fx_scale=" << fx_scale << ", fy_scale=" << fy_scale << ", cx_offset=" << cx_offset << ", cy_offset=" << cy_offset << std::endl;
+    std::cout << "fx_rd=" << calib_param[8] << ", fy_rd=" << calib_param[9] << ", cx_offset=" << calib_param[10] << ", cy_offset=" << calib_param[11] << std::endl;
 
     // 设置是否保持图像内容的宽高比
-    bool keep_shape = true;
+    bool keep_shape = false;
     bool* keep_shape_gpu = nullptr;
     CHECK_CUDA(cudaMalloc(&keep_shape_gpu, sizeof(bool)));
     CHECK_CUDA(cudaMemcpy(keep_shape_gpu, &keep_shape, sizeof(bool), cudaMemcpyHostToDevice));
+    std::cout << "Keep shape: " << (keep_shape ? "true" : "false") << std::endl;
 
     // 启动kernel进行图像去畸变和格式转换
     dim3 block_dim(64, 4); // 每个block有64*4=256个线程
     dim3 grid_dim((dst_image_size[0] + block_dim.x - 1) / block_dim.x, (dst_image_size[1] + block_dim.y - 1) / block_dim.y); // 根据输出图像的尺寸计算需要多少个block
+    std::cout << "Block dim: (" << block_dim.x << ", " << block_dim.y << ", " << block_dim.z << ")" << std::endl;
+    std::cout << "Grid dim: (" << grid_dim.x << ", " << grid_dim.y << ", " << grid_dim.z << ")" << std::endl;
     UndistortKernel<true><<<grid_dim, block_dim>>>(yuv_data_gpu, roi_param_gpu, calib_param_gpu, dst_image_size_gpu, keep_shape_gpu, output_rgb_data_gpu);
     CHECK_CUDA(cudaDeviceSynchronize()); // 等待kernel执行完成  
 
@@ -288,6 +310,7 @@ void undistort() {
     }
     output_file.write(reinterpret_cast<char*>(output_rgb_data_cpu), image_width * image_height * 3);
     output_file.close();
+    std::cout << "Output image saved to: " << output_image_path << std::endl;
 
     // 清理GPU内存
     CHECK_CUDA(cudaFree(yuv_data_gpu));
