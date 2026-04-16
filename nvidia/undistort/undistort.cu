@@ -46,12 +46,11 @@
 
 __device__ void __forceinline__ GetRGBPixel(uint8_t* yuv_data, int32_t x, int32_t y, int32_t height, int32_t pitch, uchar3& rgb_pixel) {
     int y_index = y * pitch + x; // Y分量的索引
-    int u_index = height * pitch + (y / 2) * (pitch / 2) + (x / 2); // U分量的索引
-    int v_index = height * pitch + (height / 2) * (pitch / 2) + (y / 2) * (pitch / 2) + (x / 2); // V分量的索引
+    int uv_index = (height * pitch) + (y / 2) * pitch + (x / 2) * 2; // UV分量的索引，假设是NV12格式，UV分量交错存储
 
     uint8_t Y = yuv_data[y_index];
-    uint8_t U = yuv_data[u_index];
-    uint8_t V = yuv_data[v_index];
+    uint8_t U = yuv_data[uv_index + 0]; // U分量
+    uint8_t V = yuv_data[uv_index + 1]; // V分量
 
     int32_t Y_Item = 0;
     int32_t DR = 0;
@@ -221,10 +220,10 @@ __global__ void UndistortKernel(uint8_t* yuv_data, const int32_t* roi_param, con
 
 void undistort() {
     // 输入图像数据，假设是yuv格式
-    std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/frontwide_3840_2048_420p.yuv";
+    std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/frontwide_3840_2048_nv12.yuv";
     int image_width = 3840;
     int image_height = 2048;
-    int yuv_size = image_width * image_height * 3 / 2; // yuv420p格式的图像大小
+    int yuv_size = image_width * image_height * 3 / 2; // nv12格式的图像大小
     std::vector<uint8_t> yuv_data(yuv_size);
     std::ifstream input_file(input_image_path, std::ios::binary|std::ios::ate);
     if (!input_file.is_open()) {
