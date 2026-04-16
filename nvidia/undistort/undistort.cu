@@ -2,6 +2,7 @@
 #include <bits/stdint-intn.h>
 #include <bits/stdint-uintn.h>
 #include <iostream>
+#include <string>
 #include <sys/types.h>
 #include <vector>
 #include <fstream>
@@ -311,6 +312,67 @@ void undistort() {
     output_file.close();
     std::cout << "Output image saved to: " << output_image_path << std::endl;
 
+    // 将处理后的图像数据按照nv12格式保存，方便后续验证
+    std::string output_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_nv12.yuv";
+    std::ofstream output_nv12_file(output_nv12_image_path, std::ios::binary);
+    if (!output_nv12_file.is_open()) {
+        std::cerr << "Failed to open output nv12 image file: " << output_nv12_image_path << std::endl;
+        return;
+    }
+    // 将RGB格式的图像数据转换为NV12格式并保存
+    std::vector<uint8_t> nv12_data(dst_image_size[0] * dst_image_size[1] * 3 / 2); // NV12格式的图像大小
+    for (int v = 0; v < dst_image_size[1]; ++v) {
+        for (int u = 0; u < dst_image_size[0]; ++u) {
+            int dst_index = v * dst_image_size[0] + u;
+            uint8_t R = output_rgb_data_cpu[dst_index]; // R分量
+            uint8_t G = output_rgb_data_cpu[dst_image_size[0] * dst_image_size[1] + dst_index]; // G分量
+            uint8_t B = output_rgb_data_cpu[2 * dst_image_size[0] * dst_image_size[1] + dst_index]; // B分量
+            // RGB转YUV的计算公式(ITU-R BT.601标准)：
+            // Y = 0.299 * R + 0.587 * G + 0.114 * B
+            // U = -0.169 * R - 0.331 * G + 0.5 * B + 128
+            // V = 0.5 * R - 0.419 * G - 0.081 * B + 128
+            uint8_t Y = static_cast<uint8_t>(0.299 * R + 0.587 * G + 0.114 * B);
+            uint8_t U = static_cast<uint8_t>(-0.169 * R - 0.331 * G + 0.5 * B + 128);
+            uint8_t V = static_cast<uint8_t>(0.5 * R - 0.419 * G - 0.081 * B + 128);
+            nv12_data[v * dst_image_size[0] + u] = Y; // Y分量
+            if (v % 2 == 0 && u % 2 == 0) {
+                int uv_index = (dst_image_size[0] * dst_image_size[1]) + (v / 2) * dst_image_size[0] + (u / 2) * 2; // UV分量的索引，假设是NV12格式，UV分量交错存储
+                nv12_data[uv_index + 0] = U; // U分量
+                nv12_data[uv_index + 1] = V; // V分量
+            }
+        }
+    }
+    output_nv12_file.write(reinterpret_cast<char*>(nv12_data.data()), nv12_data.size());
+    output_nv12_file.close();
+    std::cout << "Output NV12 image saved to: " << output_nv12_image_path << std::endl;
+
+    int rectangle_x = 1520;
+    int rectangle_y = 20;
+    int rectangle_width = 100;
+    int rectangle_height = 100;
+    for (int v = rectangle_y; v < rectangle_y + rectangle_height; ++v) {
+        for (int u = rectangle_x; u < rectangle_x + rectangle_width; ++u) {
+            if (v < dst_image_size[1] && u < dst_image_size[0]) {
+                int dst_index = v * dst_image_size[0] + u;
+                nv12_data[dst_index] = 128; // 将Y分量设置为128，形成一个灰色的矩形区域
+                if (v % 2 == 0 && u % 2 == 0) {
+                    int uv_index = (dst_image_size[0] * dst_image_size[1]) + (v / 2) * dst_image_size[0] + (u / 2) * 2; // UV分量的索引，假设是NV12格式，UV分量交错存储
+                    nv12_data[uv_index + 0] = 128; // 将U分量设置为128
+                    nv12_data[uv_index + 1] = 128; // 将V分量设置为128，形成一个灰色的矩形区域
+                }
+            }
+        }
+    }
+    std::string output_pixelated_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_pixelated_nv12.yuv";
+    std::ofstream output_pixelated_nv12_file(output_pixelated_nv12_image_path, std::ios::binary);
+    if (!output_pixelated_nv12_file.is_open()) {
+        std::cerr << "Failed to open output pixelated nv12 image file: " << output_pixelated_nv12_image_path << std::endl;
+        return;
+    }
+    output_pixelated_nv12_file.write(reinterpret_cast<char*>(nv12_data.data()), nv12_data.size());
+    output_pixelated_nv12_file.close();
+    std::cout << "Output pixelated NV12 image saved to: " << output_pixelated_nv12_image_path << std::endl;
+
     // 清理GPU内存
     CHECK_CUDA(cudaFree(yuv_data_gpu));
     CHECK_CUDA(cudaFree(output_rgb_data_gpu));
@@ -322,8 +384,150 @@ void undistort() {
     delete[] output_rgb_data_cpu;
 }
 
+
+__global__ void GetSrcRectangleKernel(const float* calib_param, const int32_t* roi_param, const int32_t* dst_image_size, const int32_t* dst_rectangle, int32_t* src_rectangle) {
+    // 输出图像上的四个顶点坐标
+    int32_t lu_u = dst_rectangle[0];
+    int32_t lu_v = dst_rectangle[1];
+    int32_t rd_u = dst_rectangle[2];
+    int32_t rd_v = dst_rectangle[3];
+    int32_t ld_u = dst_rectangle[4];
+    int32_t ld_v = dst_rectangle[5];
+    int32_t ru_u = dst_rectangle[6];
+    int32_t ru_v = dst_rectangle[7];
+
+    // roi参数
+    int32_t roi_x = roi_param[2];
+    int32_t roi_y = roi_param[3];
+    int32_t roi_width = roi_param[4];
+    int32_t roi_height = roi_param[5];
+    int32_t dst_image_width = dst_image_size[0];
+    int32_t dst_image_height = dst_image_size[1];
+
+
+    // 将输出图像上的四个顶点坐标映射回原始畸变图像上的坐标
+    GetDistortedPoint<true>(calib_param, (lu_u * 1.0f * roi_width / dst_image_width) + roi_x, (lu_v * 1.0f * roi_height / dst_image_height) + roi_y, src_rectangle[0], src_rectangle[1]);
+    GetDistortedPoint<true>(calib_param, (rd_u * 1.0f * roi_width / dst_image_width) + roi_x, (rd_v * 1.0f * roi_height / dst_image_height) + roi_y, src_rectangle[2], src_rectangle[3]);
+    GetDistortedPoint<true>(calib_param, (ld_u * 1.0f * roi_width / dst_image_width) + roi_x, (ld_v * 1.0f * roi_height / dst_image_height) + roi_y, src_rectangle[4], src_rectangle[5]);
+    GetDistortedPoint<true>(calib_param, (ru_u * 1.0f * roi_width / dst_image_width) + roi_x, (ru_v * 1.0f * roi_height / dst_image_height) + roi_y, src_rectangle[6], src_rectangle[7]);
+}
+struct Point2F {
+    float x;
+    float y;
+};
+
+void pixlate() {
+    // 设置相机内参和畸变参数
+    float calib_param[12] = {1906.6, 1906.18, 1923.26, 1022.45, -0.0299548, -0.00364585, -0.00155829, 0.00104736}; // fx, fy, cx, cy, k1, k2, k3, k4
+    float fx_scale = 1.0;
+    float fy_scale = 1.0;
+    float cx_offset = 0.0;
+    float cy_offset = 0.0;
+    calib_param[8] = calib_param[0] / fx_scale;
+    calib_param[9] = calib_param[1] / fy_scale;
+    calib_param[10] = cx_offset;
+    calib_param[11] = cy_offset;
+    int32_t image_width = 3840;
+    int32_t image_height = 2048;
+    int32_t roi_param[6] = {image_width, image_height, 0, 0, image_width, image_height}; // roi参数，假设是全图
+    int32_t dst_image_size[2] = {image_width / 2, image_height / 2}; // 输出图像的尺寸
+
+    float* calib_param_gpu = nullptr;
+    CHECK_CUDA(cudaMalloc(&calib_param_gpu, sizeof(calib_param)));
+    CHECK_CUDA(cudaMemcpy(calib_param_gpu, calib_param, sizeof(calib_param), cudaMemcpyHostToDevice));
+    int32_t* roi_param_gpu = nullptr;
+    CHECK_CUDA(cudaMalloc(&roi_param_gpu, sizeof(roi_param)));
+    CHECK_CUDA(cudaMemcpy(roi_param_gpu, roi_param, sizeof(roi_param), cudaMemcpyHostToDevice));
+    int32_t* dst_image_size_gpu = nullptr;
+    CHECK_CUDA(cudaMalloc(&dst_image_size_gpu, sizeof(dst_image_size)));
+    CHECK_CUDA(cudaMemcpy(dst_image_size_gpu, dst_image_size, sizeof(dst_image_size), cudaMemcpyHostToDevice));
+
+    // 目标图像的一个矩形区域的四个顶点坐标
+    Point2F lu = {1520.0f, 20.0f}; // 左上角坐标
+    Point2F rd = {1620.0f, 120.0f}; // 右下角坐标
+    Point2F ld = {1520.0f, 120.0f}; // 左下角坐标
+    Point2F ru = {1620.0f, 20.0f}; // 右上角坐标
+    int32_t dst_rectangle[8] = {static_cast<int32_t>(lu.x), static_cast<int32_t>(lu.y), static_cast<int32_t>(rd.x), static_cast<int32_t>(rd.y), static_cast<int32_t>(ld.x), static_cast<int32_t>(ld.y), static_cast<int32_t>(ru.x), static_cast<int32_t>(ru.y)};
+    int32_t* dst_rectangle_gpu = nullptr;
+    CHECK_CUDA(cudaMalloc(&dst_rectangle_gpu, sizeof(dst_rectangle)));
+    CHECK_CUDA(cudaMemcpy(dst_rectangle_gpu, dst_rectangle, sizeof(dst_rectangle), cudaMemcpyHostToDevice));
+    std::cout << "Target rectangle coordinates in the output image: " << std::endl;
+    std::cout << "Left-upper corner: (" << dst_rectangle[0] << ", " << dst_rectangle[1] << ")" << std::endl;
+    std::cout << "Right-lower corner: (" << dst_rectangle[2] << ", " << dst_rectangle[3] << ")" << std::endl;
+    std::cout << "Left-lower corner: (" << dst_rectangle[4] << ", " << dst_rectangle[5] << ")" << std::endl;
+    std::cout << "Right-upper corner: (" << dst_rectangle[6] << ", " << dst_rectangle[7] << ")" << std::endl;
+
+    int32_t src_rectangle[8] = {0}; // 原始图像上对应的矩形区域的四个顶点坐标
+    int32_t* src_rectangle_gpu = nullptr;
+    CHECK_CUDA(cudaMalloc(&src_rectangle_gpu, sizeof(src_rectangle)));
+    GetSrcRectangleKernel<<<1, 1>>>(calib_param_gpu, roi_param_gpu, dst_image_size_gpu, dst_rectangle_gpu, src_rectangle_gpu);
+    CHECK_CUDA(cudaDeviceSynchronize());
+    CHECK_CUDA(cudaMemcpy(src_rectangle, src_rectangle_gpu, sizeof(src_rectangle), cudaMemcpyDeviceToHost));
+    std::cout << "Source rectangle coordinates in the original image corresponding to the target rectangle: " << std::endl;
+    std::cout << "Left-upper corner: (" << src_rectangle[0] << ", " << src_rectangle[1] << ")" << std::endl;
+    std::cout << "Right-lower corner: (" << src_rectangle[2] << ", " << src_rectangle[3] << ")" << std::endl;
+    std::cout << "Left-lower corner: (" << src_rectangle[4] << ", " << src_rectangle[5] << ")" << std::endl;
+    std::cout << "Right-upper corner: (" << src_rectangle[6] << ", " << src_rectangle[7] << ")" << std::endl;
+
+    // 输入输出图像
+    int src_rectangle_x = min(min(src_rectangle[0], src_rectangle[2]), min(src_rectangle[4], src_rectangle[6]));
+    int src_rectangle_y = min(min(src_rectangle[1], src_rectangle[3]), min(src_rectangle[5], src_rectangle[7]));
+    int src_rectangle_width = max(max(src_rectangle[0], src_rectangle[2]), max(src_rectangle[4], src_rectangle[6])) - src_rectangle_x;
+    int src_rectangle_height = max(max(src_rectangle[1], src_rectangle[3]), max(src_rectangle[5], src_rectangle[7])) - src_rectangle_y;
+    std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/frontwide_3840_2048_nv12.yuv";
+    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_3840_2048_pixelated_nv12.yuv";
+    std::ifstream input_file(input_image_path, std::ios::binary|std::ios::ate);
+    if (!input_file.is_open()) {
+        std::cerr << "Failed to open input image file: " << input_image_path << std::endl;
+        return;
+    }
+    std::size_t file_size = input_file.tellg();
+    int file_size_expected = image_width * image_height * 3 / 2; // nv12格式的图像大小
+    if (file_size != file_size_expected) {
+        std::cerr << "Input image file size does not match expected size: " << file_size << " vs " << file_size_expected << std::endl;
+        return;
+    }
+    input_file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> image_data(file_size);
+    input_file.read(reinterpret_cast<char*>(image_data.data()), file_size);
+    input_file.close();
+
+    for(int u = src_rectangle_x; u < src_rectangle_x + src_rectangle_width; ++u) {
+        for(int v = src_rectangle_y; v < src_rectangle_y + src_rectangle_height; ++v) {
+            if(u >= 0 && u < image_width && v >= 0 && v < image_height) {
+                int yuv_index = v * image_width + u; // Y分量的索引
+                // 将Y分量设置为128，形成一个灰色的像素点
+                image_data[yuv_index] = 128;
+                if (v % 2 == 0 && u % 2 == 0) {
+                    int uv_index = (image_width * image_height) + (v / 2) * image_width + (u / 2) * 2; // UV分量的索引，假设是NV12格式，UV分量交错存储
+                    image_data[uv_index + 0] = 128; // 将U分量设置为128
+                    image_data[uv_index + 1] = 128; // 将V分量设置为128
+                }
+            }
+        }
+    }
+    std::ofstream output_file(output_image_path, std::ios::binary);
+    if (!output_file.is_open()) {
+        std::cerr << "Failed to open output image file: " << output_image_path << std::endl;
+        return;
+    }
+    output_file.write(reinterpret_cast<char*>(image_data.data()), image_data.size());
+    output_file.close();
+    std::cout << "Pixelated image saved to: " << output_image_path << std::endl;
+
+    // 清理GPU内存
+    CHECK_CUDA(cudaFree(calib_param_gpu));
+    CHECK_CUDA(cudaFree(roi_param_gpu));
+    CHECK_CUDA(cudaFree(dst_image_size_gpu));
+    CHECK_CUDA(cudaFree(dst_rectangle_gpu));
+    CHECK_CUDA(cudaFree(src_rectangle_gpu));
+
+}
+
 int main() {
     std::cout << "=================== undistort ===================" << std::endl;
     undistort();
+    std::cout << "=================== pixlate ===================" << std::endl;
+    pixlate();
     return 0;
 }
