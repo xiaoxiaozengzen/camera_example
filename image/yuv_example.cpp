@@ -1,3 +1,4 @@
+#include <bits/c++config.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -32,20 +33,50 @@
  *     - NV12：先存储Y分量，然后交替存储UV分量，U在前
  *     - NV21：先存储Y分量，然后交替存储VU分量，V在前
  *   - YUYV422: YUV的packed格式，采样格式为YUV422，YUYV表示存储顺序。不以P结尾的一般是packed格式
- * 5.yuv跟rgb的转换(按照BT.601标准)：
- *   - YUV转RGB公式：
- *     R = Y + 1.402 * (V - 128)
- *     G = Y - 0.344136 * (U - 128) - 0.714136 * (V - 128)
- *     B = Y + 1.772 * (U - 128)
- *     采样：对于YUV420格式：
+ *   总结：
+ *     - YUV420p在视频编解码，图像处理更常见，因为其结构简单，易于处理和优化；
+ *     - 而NV12在硬件加速和某些视频处理场景中更常见，因为其半平面结构更适合GPU等硬件的内存访问模式。
+ * 5.采样：对于YUV420格式：
  *       - Y可以根据每一个像素点直接获取；
  *       - 一个U对应一个block的2x2像素点，一般需要计算四个像素的U，然后再取平均值作为该block中每个像素点的U值；V同理。
  *       - 例如Block(0,0)对应的像素点为(0,0),(0,1),(1,0),(1,1)
- *   - RGB转YUV公式：
- *     Y = 0.299 * R + 0.587 * G + 0.114 * B
- *     U = -0.14713 * R - 0.28886 * G + 0.436 * B + 128
- *     V = 0.615 * R - 0.51499 * G - 0.10001 * B + 128
- *   注意：在计算UV分量中，+128是因为UV会有负值，加上128后可以将其值域映射到0-255之间，方便存储和处理。
+ * 6.yuv420跟rgb的转换：
+ *   其中RGB的各个分量范围为0-255，Y分量范围为16-235，U和V分量范围为0~127
+ *   YUV的色域：
+ *     - 局部色域：Y分量范围为16-235，U和V分量范围为16-240，常用于视频编码、广播、摄像头输出等
+ *     - 全局色域：Y分量范围为0-255，U和V分量范围为0-255，也叫电脑色域，常用于图片处理、PC显示等
+ * 6.1.标准：
+ *  BT.609：适用于SD（标清）视频，分辨率通常为720x480或720x576
+ *  BT.709: 适用于HD（高清）视频，分辨率通常为1280x720或1920x1080
+ *  BT.2020: 适用于UHD（超高清）视频，分辨率通常为3840x2160或7680x4320
+ * 6.2.公式：
+ * 6.2.1. BT.601
+ *   Y = 0.257R + 0.504G + 0.098B + 16
+ *   Cb = -0.148R - 0.291G + 0.439B + 128
+ *   Cr = 0.439R - 0.368G - 0.071B + 128
+ *  
+ *   YUV是局部色域
+ *   R = 1.164(Y - 16) + 1.596(V - 128)
+ *   G = 1.164(Y - 16) - 0.391(U - 128) - 0.813(V - 128)
+ *   B = 1.164(Y - 16) + 2.018(U - 128)
+ *
+ *   YUV是全局色域：
+ *   R = Y + 1.402(V - 128)
+ *   G = Y - 0.344136(U - 128) - 0.714136(V - 128)
+ *   B = Y + 1.772(U - 128)
+ * 6.2.2. BT.709
+ *   Y = 0.183R + 0.614G + 0.062B + 16
+ *   Cb = -0.101R - 0.338G + 0.439B + 128
+ *   Cr = 0.439R - 0.399G - 0.040B + 128
+ *   YUV是局部色域：
+ *   R = 1.164(Y - 16) + 1.793(V - 128)
+ *   G = 1.164(Y - 16) - 0.213(U - 128) - 0.533(V - 128)
+ *   B = 1.164(Y - 16) + 2.112(U - 128)
+ *   YUV是全局色域：
+ *   R = Y + 1.280(V - 128)
+ *   G = Y - 0.215(U - 128) - 0.381(V - 128)
+ *   B = Y + 2.128(U - 128)
+ * 6.3.注意：在计算UV分量中，+128是因为UV会有负值，加上128后可以将其值域映射到0-255之间，方便存储和处理。
  *        所以在YUV转RGB时，需要将U和V分量减去128以还原其原始值。
  */
 
@@ -307,6 +338,63 @@ void yuv2rgb_math(std::string yuv_file, std::string bgr_file, int width, int hei
     cv::imwrite(bgr_file, bgr_image);
 }
 
+void nv12Trgb_math(std::string yuv_file, std::string bgr_file, int width, int height, int frame_size) {
+    std::ifstream yuv_stream(yuv_file, std::ios::binary);
+    if(!yuv_stream.is_open()) {
+        std::cerr << "Could not open NV12 file: " << yuv_file << std::endl;
+        return;
+    }
+    std::cout << "------ nv12 file: " << yuv_file << std::endl;
+    std::string yuv = "yuv";
+    std::string::iterator it = std::find_end(yuv_file.begin(), yuv_file.end(), yuv.begin(), yuv.end());
+    if(it == yuv_file.end()) {
+        std::cerr << "The file is not a NV12 file: " << yuv_file << std::endl;
+        return;
+    }
+
+    std::cout << "------ bgr file: " << bgr_file << std::endl;
+
+    // Read NV12 data
+    std::vector<unsigned char> yuv_data(frame_size);
+    yuv_stream.read(reinterpret_cast<char*>(yuv_data.data()), frame_size);
+    if(yuv_stream.gcount() != frame_size) {
+        std::cerr << "Error reading NV12 file: " << yuv_file << std::endl;
+        return;
+    }
+
+    // bgr info
+    std::vector<unsigned char> bgr_data(width * height * 3);
+    int bgr_stride = width * 3;
+
+    for(int i = 0; i < height; i++) {
+        for(int j = 0; j < width; j++) {
+            int bgr_index = i * bgr_stride + j * 3;
+
+            std::size_t y_index = i * width + j;
+            std::size_t uv_index = (height * width) + (i / 2) * width + (j / 2) * 2; // NV12格式中，UV交替存储，U在前
+            unsigned char Y = yuv_data[y_index];
+            unsigned char U = yuv_data[uv_index + 0];
+            unsigned char V = yuv_data[uv_index + 1];
+
+            float R = Y + 1.402 * (V - 128);
+            float G = Y - 0.344136 * (U - 128) - 0.714136 * (V - 128);
+            float B = Y + 1.772 * (U - 128);
+
+            // Clamp values to [0, 255]
+            R = std::min(std::max(R, 0.0f), 255.0f);
+            G = std::min(std::max(G, 0.0f), 255.0f);
+            B = std::min(std::max(B, 0.0f), 255.0f);
+
+            bgr_data[bgr_index + 0] = static_cast<unsigned char>(B);
+            bgr_data[bgr_index + 1] = static_cast<unsigned char>(G);
+            bgr_data[bgr_index + 2] = static_cast<unsigned char>(R);
+        }
+    }
+
+    cv::Mat bgr_image(height, width, CV_8UC3, bgr_data.data());
+    cv::imwrite(bgr_file, bgr_image);   
+}
+
 int main() {
     std::cout << "============================  yuv_info 1 ====================== " << std::endl;
     std::string yuv_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
@@ -348,9 +436,14 @@ int main() {
     yuv2rgb(yuv_file6, rgb_file6, bgr_file6, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
 
     std::cout << "============================  yuv2rgb_math ====================== " << std::endl;
-    std::string yuv_file7 = "/data/workspace/Exercise/camera_example/input/650_yuv420p.yuv";
-    std::string bgr_file7 = "/data/workspace/Exercise/camera_example/output/650_yuv420p_bgr_math.jpg";
+    std::string yuv_file7 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_yuv420p.yuv";
+    std::string bgr_file7 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_yuv420p_bgr_math.jpg";
     yuv2rgb_math(yuv_file7, bgr_file7, 1080, 1920, 1080 * 1920 * 3 / 2); // YUV420P格式
+
+    std::cout << "============================  nv12Trgb_math ====================== " << std::endl;
+    std::string nv12_file = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/650_nv12.yuv";
+    std::string bgr_file8 = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/650_nv12_bgr_math.jpg";
+    nv12Trgb_math(nv12_file, bgr_file8, 1080, 1920, 1080 * 1920 * 3 / 2); // NV12格式
 
     return 0;
 }

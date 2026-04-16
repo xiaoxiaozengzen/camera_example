@@ -7,6 +7,7 @@
 ```bash
 # 将jpg转成yuv
 ffmpeg -i input.jpg -pix_fmt yuv420p output.yuv
+ffmpeg -i input.jpg -pix_fmt nv12 output.yuv
 
 # yuv转jpg
 # * -f rawvideo: 输入为原始视频流(无文件头)
