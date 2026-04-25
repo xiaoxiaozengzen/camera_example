@@ -10,3 +10,6 @@ output/*.h264
 output/*.h265
 output/*.jpeg
 output/*.bgr
+output/*.rgb
+output/*.nv12
+output/*.nv21

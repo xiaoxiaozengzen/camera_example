@@ -243,16 +243,10 @@ void undistort() {
     input_file.close();
     std::cout << "Input image size: " << file_size << " bytes" << std::endl;
 
-    // 设置输入输出图像数据的GPU内存
+    // 设置输入图像数据的GPU内存
     uint8_t* yuv_data_gpu = nullptr;
     CHECK_CUDA(cudaMalloc(&yuv_data_gpu, yuv_size));
     CHECK_CUDA(cudaMemcpy(yuv_data_gpu, yuv_data.data(), yuv_size, cudaMemcpyHostToDevice));
-    uint8_t* output_rgb_data_cpu = nullptr; // 输出图像数据的CPU内存
-    output_rgb_data_cpu = new uint8_t[image_width * image_height * 3]; // 输出图像数据的大小，假设是RGB格式
-    memset(output_rgb_data_cpu, 0, image_width * image_height * 3); // 初始化输出图像数据
-    uint8_t* output_rgb_data_gpu = nullptr; // 输出图像数据的GPU内存
-    CHECK_CUDA(cudaMalloc(&output_rgb_data_gpu, image_width * image_height * 3));
-    CHECK_CUDA(cudaMemcpy(output_rgb_data_gpu, output_rgb_data_cpu, image_width * image_height * 3, cudaMemcpyHostToDevice));
 
     // 设置roi
     int32_t roi_param[6] = {image_width, image_height, 0, 0, image_width, image_height}; // roi参数，假设是全图
@@ -268,6 +262,14 @@ void undistort() {
     CHECK_CUDA(cudaMalloc(&dst_image_size_gpu, sizeof(dst_image_size)));
     CHECK_CUDA(cudaMemcpy(dst_image_size_gpu, dst_image_size, sizeof(dst_image_size), cudaMemcpyHostToDevice));
     std::cout << "Output image size: width=" << dst_image_size[0] << ", height=" << dst_image_size[1] << std::endl;
+
+    // 设置输出图像数据的GPU内存
+    uint8_t* output_rgb_data_cpu = nullptr; // 输出图像数据的CPU内存
+    output_rgb_data_cpu = new uint8_t[dst_image_size[0] * dst_image_size[1] * 3]; // 输出图像数据的大小，假设是RGB格式
+    memset(output_rgb_data_cpu, 0, dst_image_size[0] * dst_image_size[1] * 3); // 初始化输出图像数据
+    uint8_t* output_rgb_data_gpu = nullptr; // 输出图像数据的GPU内存
+    CHECK_CUDA(cudaMalloc(&output_rgb_data_gpu, dst_image_size[0] * dst_image_size[1] * 3));
+    CHECK_CUDA(cudaMemcpy(output_rgb_data_gpu, output_rgb_data_cpu, dst_image_size[0] * dst_image_size[1] * 3, cudaMemcpyHostToDevice));
 
     // 设置相机内参和畸变参数
     float calib_param[12] = {1906.6, 1906.18, 1923.26, 1022.45, -0.0299548, -0.00364585, -0.00155829, 0.00104736}; // fx, fy, cx, cy, k1, k2, k3, k4
@@ -303,19 +305,19 @@ void undistort() {
     CHECK_CUDA(cudaDeviceSynchronize()); // 等待kernel执行完成  
 
     // 将处理后的图像数据从GPU内存复制回CPU内存
-    CHECK_CUDA(cudaMemcpy(output_rgb_data_cpu, output_rgb_data_gpu, image_width * image_height * 3, cudaMemcpyDeviceToHost));
-    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_3.bgr"; // 输出图像的路径，假设是bgr格式
+    CHECK_CUDA(cudaMemcpy(output_rgb_data_cpu, output_rgb_data_gpu, dst_image_size[0] * dst_image_size[1] * 3, cudaMemcpyDeviceToHost));
+    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_1920_1024.rgb"; // 输出图像的路径，假设是rgb格式
     std::ofstream output_file(output_image_path, std::ios::binary);
     if (!output_file.is_open()) {
         std::cerr << "Failed to open output image file: " << output_image_path << std::endl;
         return;
     }
-    output_file.write(reinterpret_cast<char*>(output_rgb_data_cpu), image_width * image_height * 3);
+    output_file.write(reinterpret_cast<char*>(output_rgb_data_cpu), dst_image_size[0] * dst_image_size[1] * 3);
     output_file.close();
     std::cout << "Output image saved to: " << output_image_path << std::endl;
 
     // 将处理后的图像数据按照nv12格式保存，方便后续验证
-    std::string output_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_nv12.yuv";
+    std::string output_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_1920_1024_nv12.yuv";
     std::ofstream output_nv12_file(output_nv12_image_path, std::ios::binary);
     if (!output_nv12_file.is_open()) {
         std::cerr << "Failed to open output nv12 image file: " << output_nv12_image_path << std::endl;
@@ -365,7 +367,7 @@ void undistort() {
             }
         }
     }
-    std::string output_pixelated_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_pixelated_nv12.yuv";
+    std::string output_pixelated_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_1920_1024_nv12_pixelated.yuv";
     std::ofstream output_pixelated_nv12_file(output_pixelated_nv12_image_path, std::ios::binary);
     if (!output_pixelated_nv12_file.is_open()) {
         std::cerr << "Failed to open output pixelated nv12 image file: " << output_pixelated_nv12_image_path << std::endl;
@@ -478,7 +480,7 @@ void pixlate() {
     int src_rectangle_width = max(max(src_rectangle[0], src_rectangle[2]), max(src_rectangle[4], src_rectangle[6])) - src_rectangle_x;
     int src_rectangle_height = max(max(src_rectangle[1], src_rectangle[3]), max(src_rectangle[5], src_rectangle[7])) - src_rectangle_y;
     std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/frontwide_3840_2048_nv12.yuv";
-    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_3840_2048_pixelated_nv12.yuv";
+    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_3840_2048_nv12_pixelated.yuv";
     std::ifstream input_file(input_image_path, std::ios::binary|std::ios::ate);
     if (!input_file.is_open()) {
         std::cerr << "Failed to open input image file: " << input_image_path << std::endl;
@@ -568,7 +570,8 @@ __global__ void ResizeKernel(uint8_t* yuv_data, const int32_t* roi_param, const 
      * 2. 计算出src_x和src_y相对于(x_low, y_low)的偏移量，分别是(src_x - x_low)和(src_y - y_low)，
      *    然后将它们乘以大整数，将偏移量从[0, 1)范围内的浮点数转换为[0, INTER_SCALE)范围内的整数，分别是lx和ly。
      *    同时计算出hx和hy，分别是INTER_SCALE减去lx和ly，表示相对于(x_high, y_high)的权重。
-     * 3.]
+     * 3. 获取双线性插值需要的四个像素点的RGB值，分别是(x_low, y_low), (x_high, y_low), (x_low, y_high), (x_high, y_high)对应的像素点的RGB值。
+     * 4. 根据双线性插值的公式，计算出目标图像上坐标(u, v)对应的RGB值
      */
     int x_low = floorf(src_x); // floorf函数返回小于或等于的最大整数，类似floor，cuda内置函数
     int y_low = floorf(src_y);
@@ -592,13 +595,27 @@ __global__ void ResizeKernel(uint8_t* yuv_data, const int32_t* roi_param, const 
     uint8_t g = 0;
     uint8_t b = 0;
 
-    /**
-     * @brief 插值公式：
-     * 假设原图像素点的坐标为(x, y)，其附近的四个像素点的坐标为(x_low, y_low), (x_high, y_low), (x_low, y_high), (x_high, y_high)，
-     * 以及插值权重为dx = src_x - x_low, dy = src_y - y_low，那么双线性插值的公式如下：
-     * R = (1 - dx) * (1 - dy) * R(x_low, y_low) + dx * (1 - dy) * R(x_high, y_low)
-     *     + (1 - dx) * dy * R(x_low, y_high) + dx * dy * R(x_high, y_high)
-     * G和B分量的计算公式与R分量类似，只需要将R替换为G或B即可。
+    /** 
+     * 横向插值：
+     *  1. x_high_offest * rgb_data[0].x + x_low_offest * rgb_data[1].x
+     *     表示在y_low这一行上，src_x相对于(x_low, y_low)的权重分别是x_high_offest和x_low_offest，
+     *     乘以对应像素点的R分量值，得到在y_low这一行上src_x对应的R分量值。
+     *  2. x_high_offest * rgb_data[2].x + x_low_offest * rgb_data[3].x
+     *     表示在y_high这一行上，src_x相对于(x_low, y_high)的权重分别是x_high_offest和x_low_offest，
+     *     乘以对应像素点的R分量值，得到在y_high这一行上src_x对应的R分量值。
+     * 再纵向插值：
+     *  1. y_high_offest * (在y_low这一行上src_x对应的R分量值)
+     *  2. y_low_offest * (在y_high这一行上src_x对应的R分量值)
+     * 最后将两部分的结果相加，得到最终的R分量值。G和B分量的计算公式与R分量类似，只需要将R替换为G或B即可。
+     *
+     * 下面的计算公式中：
+     * 1. >> 4：x_high_offest和x_low_offest是乘以了INTER_SCALE(1 << INTER)的整数，单个像素值是255(1<<8)，
+     *          这里先简单降低整数的位数，避免后续计算中整数溢出，降低计算的复杂度。
+     * 2. >> 16：y_high_offest和y_low_offest也是乘以了INTER_SCALE(1 << INTER)的整数，
+     *          前面已经降低了x_high_offest和x_low_offest的位数，这里再降低y_high_offest和y_low_offest的位数，避免整数溢出，降低计算的复杂度。
+     * 3. + 2) >> 2：等价于 + (1<1) >> 2，即在除以4之前先加上2，起到四舍五入的作用，进一步提高计算的精度。
+     * 4. 整体上左移动了INTER_SCALE*2的位数(y_high_offest和y_low_offest都是左移INTER_SCALE)，
+     *    所以需要右移INTER_SCALE*2的位数来恢复到正常的范围内，避免整数溢出，同时保持计算的精度。
      */
     r = (((y_high_offest * ((x_high_offest * rgb_data[0].x + x_low_offest * rgb_data[1].x) >> 4)) >> 16)
         + ((y_low_offest * ((x_high_offest * rgb_data[2].x + x_low_offest * rgb_data[3].x) >> 4)) >> 16) + 2) >> 2;
@@ -607,9 +624,9 @@ __global__ void ResizeKernel(uint8_t* yuv_data, const int32_t* roi_param, const 
     b = (((y_high_offest * ((x_high_offest * rgb_data[0].z + x_low_offest * rgb_data[1].z) >> 4)) >> 16)
         + ((y_low_offest * ((x_high_offest * rgb_data[2].z + x_low_offest * rgb_data[3].z) >> 4)) >> 16) + 2) >> 2;
 
-    output_rgb_data[dst_index] = r / 2;
-    output_rgb_data[dst_image_width * dst_image_height + dst_index] = g / 2;
-    output_rgb_data[2 * dst_image_width * dst_image_height + dst_index] = b / 2;
+    output_rgb_data[dst_index] = r;
+    output_rgb_data[dst_image_width * dst_image_height + dst_index] = g;
+    output_rgb_data[2 * dst_image_width * dst_image_height + dst_index] = b;
 }
 
 void resize() {
@@ -697,7 +714,7 @@ void resize() {
 
     // 将处理后的图像数据从GPU内存复制回CPU内存
     CHECK_CUDA(cudaMemcpy(output_rgb_data_cpu, output_rgb_data_gpu, dst_image_size[0] * dst_image_size[1] * 3, cudaMemcpyDeviceToHost));
-    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_resize_3.bgr"; // 输出图像的路径，假设是bgr格式
+    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_1920_1024_resize.rgb"; // 输出图像的路径，假设是bgr格式
     std::ofstream output_file(output_image_path, std::ios::binary);
     if (!output_file.is_open()) {
         std::cerr << "Failed to open output image file: " << output_image_path << std::endl;
@@ -708,7 +725,7 @@ void resize() {
     std::cout << "Output image saved to: " << output_image_path << std::endl;
 
     // 保存成nv12格式，方便后续验证
-    std::string output_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/frontwide_1920_1024_resize_nv12.yuv";
+    std::string output_nv12_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_frontwide_1920_1024_nv12_resize.yuv";
     std::ofstream output_nv12_file(output_nv12_image_path, std::ios::binary);
     if (!output_nv12_file.is_open()) {
         std::cerr << "Failed to open output nv12 image file: " << output_nv12_image_path << std::endl;
