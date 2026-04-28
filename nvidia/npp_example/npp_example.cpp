@@ -227,52 +227,65 @@ void npp_resize_example() {
     std::cerr << "Failed to read input file: " << input_image_path << std::endl;
     return;
   }
+  std::cout << "Read input image: " << input_image_path << ", size: " << input_size << " bytes" << std::endl;
 
   // 定义源图像和目标图像的尺寸
   const int src_width = 1080;
   const int src_height = 1920;
   const int dst_width = 540;
   const int dst_height = 540;
+  std::cout << "Source image size: " << src_width << "x" << src_height << std::endl;
+  std::cout << "Destination image size: " << dst_width << "x" << dst_height << std::endl;
 
   // 计算YUV420P格式中Y、U、V分量的大小和帧大小
   const size_t src_y_size = src_width * src_height;
   const size_t src_u_size = (src_width / 2) * (src_height / 2);
   const size_t src_v_size = src_u_size;
   const size_t src_frame_size = src_y_size + src_u_size + src_v_size;
-  const size_t dst_y_size = dst_width * dst_height;
-  const size_t dst_u_size = (dst_width / 2) * (dst_height / 2);
-  const size_t dst_v_size = dst_u_size;
-  const size_t dst_frame_size = dst_y_size + dst_u_size + dst_v_size;
 
   // host端源图像和目标图像数据指针
   const unsigned char* h_src_y = h_src.data();
   const unsigned char* h_src_u = h_src.data() + src_y_size;
   const unsigned char* h_src_v = h_src.data() + src_y_size + src_u_size;
-  std::vector<unsigned char> h_dst(dst_frame_size, 0);
-  unsigned char* h_dst_y = h_dst.data();
-  unsigned char* h_dst_u = h_dst.data() + dst_y_size;
-  unsigned char* h_dst_v = h_dst.data() + dst_y_size + dst_u_size;
+  const size_t rgb_channels = 3;
+  const size_t src_rgb_size = src_width * src_height * rgb_channels;
+  std::vector<Npp8u> h_src_rgb(src_rgb_size);
+  const size_t dst_rgb_size = dst_width * dst_height * rgb_channels;
+  std::vector<Npp8u> h_dst_rgb(dst_rgb_size);
 
   // 分配device端内存并将数据从host端拷贝到device端
-  unsigned char *d_src_y=nullptr, *d_src_u=nullptr, *d_src_v=nullptr;
-  unsigned char *d_dst_y=nullptr, *d_dst_u=nullptr, *d_dst_v=nullptr;
+  Npp8u *d_src_y=nullptr, *d_src_u=nullptr, *d_src_v=nullptr;
+  Npp8u *d_src_rgb=nullptr;
+  Npp8u *d_dst_rgb=nullptr;
   CHECK_CUDA(cudaMalloc(&d_src_y, src_y_size));
   CHECK_CUDA(cudaMalloc(&d_src_u, src_u_size));
   CHECK_CUDA(cudaMalloc(&d_src_v, src_v_size));
-  CHECK_CUDA(cudaMalloc(&d_dst_y, dst_y_size));
-  CHECK_CUDA(cudaMalloc(&d_dst_u, dst_u_size));
-  CHECK_CUDA(cudaMalloc(&d_dst_v, dst_v_size));
+  CHECK_CUDA(cudaMalloc(&d_src_rgb, src_rgb_size));
+  CHECK_CUDA(cudaMalloc(&d_dst_rgb, dst_rgb_size));
   CHECK_CUDA(cudaMemcpy(d_src_y, h_src_y, src_y_size, cudaMemcpyHostToDevice));
   CHECK_CUDA(cudaMemcpy(d_src_u, h_src_u, src_u_size, cudaMemcpyHostToDevice));
   CHECK_CUDA(cudaMemcpy(d_src_v, h_src_v, src_v_size, cudaMemcpyHostToDevice));
 
-  // Y resize
+  Npp8u* yuv_data[3] = { d_src_y, d_src_u, d_src_v };
+  int yuv_step[3] = { src_width, src_width / 2, src_width / 2 };
+
+  /**
+   * @brief 3通道uint8_t的YUV420P图像转换为3通道uint8_t的RGB图像
+   * @param pSrc 一个数组，指向输入图像的Y、U、V分量数据指针，数组长度为3
+   * @param rSrcStep 一个数组，指向输入图像的Y、U、V分量每行的字节数(stride)，数组长度为3
+   * @param pDst 指向输出图像数据的指针，输出图像是3通道RGB格式
+   * @param nDstStep 输出图像每行的字节数(stride)
+   * @param oSizeROI roi区域的尺寸，表示输入图像和输出图像的宽高
+   */
+  CHECK_NPP(nppiYUV420ToRGB_8u_P3C3R(yuv_data, yuv_step, d_src_rgb, src_width * rgb_channels, { src_width, src_height }));
+  CHECK_CUDA(cudaMemcpy(h_src_rgb.data(), d_src_rgb, src_rgb_size, cudaMemcpyDeviceToHost));
+
   NppiSize src_size = { src_width, src_height };
   NppiRect src_roi = { 0, 0, src_width, src_height };
-  int src_step = src_width; // Y分量每行的字节数
+  int src_step = src_width * rgb_channels; // RGB图像每行的字节数
   NppiSize dst_size = { dst_width, dst_height };
   NppiRect dst_roi = { 0, 0, dst_width, dst_height };
-  int dst_step = dst_width; // Y分量每行的字节数
+  int dst_step = dst_width * rgb_channels; // RGB图像每行的字节数
   /**
    * @brief resize image
    * @param pSrc 源图像数据指针
@@ -285,38 +298,45 @@ void npp_resize_example() {
    * @param oDstROI 目标图像的ROI区域
    * @param eInterpolationType 插值算法类型
    */
-  CHECK_NPP(nppiResize_8u_C1R(d_src_y, src_step, src_size, src_roi, d_dst_y, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
-
-  // U resize
-  src_size = { src_width / 2, src_height / 2 };
-  src_roi = { 0, 0, src_width / 2, src_height / 2 };
-  src_step = src_width / 2; // U分量每行的字节数
-  dst_size = { dst_width / 2, dst_height / 2 };
-  dst_roi = { 0, 0, dst_width / 2, dst_height / 2 };
-  dst_step = dst_width / 2; // U分量每行的字节数
-  CHECK_NPP(nppiResize_8u_C1R(d_src_u, src_step, src_size, src_roi, d_dst_u, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
-
-  // V resize
-  CHECK_NPP(nppiResize_8u_C1R(d_src_v, src_step, src_size, src_roi, d_dst_v, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
+  CHECK_NPP(nppiResize_8u_C3R(d_src_rgb, src_step, src_size, src_roi, d_dst_rgb, dst_step, dst_size, dst_roi, NPPI_INTER_LINEAR));
 
   // 将数据从device端拷贝回host端并写入输出文件
-  CHECK_CUDA(cudaMemcpy(h_dst_y, d_dst_y, dst_y_size, cudaMemcpyDeviceToHost));
-  CHECK_CUDA(cudaMemcpy(h_dst_u, d_dst_u, dst_u_size, cudaMemcpyDeviceToHost));
-  CHECK_CUDA(cudaMemcpy(h_dst_v, d_dst_v, dst_v_size, cudaMemcpyDeviceToHost));
+  CHECK_CUDA(cudaMemcpy(h_dst_rgb.data(), d_dst_rgb, dst_rgb_size, cudaMemcpyDeviceToHost));
+
+  // RGB转YUV420P
+  std::vector<unsigned char> h_dst_yuv420p(dst_height * dst_width * 3 / 2);
+  for(int y = 0; y < dst_height; y++) {
+    for(int x = 0; x < dst_width; x++) {
+      int idx_rgb = (y * dst_width + x) * rgb_channels;
+      unsigned char r = h_dst_rgb[idx_rgb + 0];
+      unsigned char g = h_dst_rgb[idx_rgb + 1];
+      unsigned char b = h_dst_rgb[idx_rgb + 2];
+      unsigned char y_val = static_cast<unsigned char>(0.299f * r + 0.587f * g + 0.114f * b);
+      unsigned char u_val = static_cast<unsigned char>(-0.169f * r - 0.331f * g + 0.5f * b + 128);
+      unsigned char v_val = static_cast<unsigned char>(0.5f * r - 0.419f * g - 0.081f * b + 128);
+      h_dst_yuv420p[y * dst_width + x] = y_val;
+      if(y % 2 == 0 && x % 2 == 0) {
+        int idx_uv = (y / 2) * (dst_width / 2) + (x / 2);
+        h_dst_yuv420p[dst_height * dst_width + idx_uv] = u_val;
+        h_dst_yuv420p[dst_height * dst_width + (dst_width / 2) * (dst_height / 2) + idx_uv] = v_val;
+      }
+    }
+  }
+
   std::ofstream output_file(output_image_path, std::ios::binary);
   if (!output_file.is_open()) {
     std::cerr << "Failed to open output file: " << output_image_path << std::endl;
     return;
   }
-  output_file.write(reinterpret_cast<char*>(h_dst.data()), h_dst.size());
+  output_file.write(reinterpret_cast<char*>(h_dst_yuv420p.data()), h_dst_yuv420p.size());
+  std::cout << "Wrote output image: " << output_image_path << ", size: " << h_dst_yuv420p.size() << " bytes" << std::endl;
 
   // 释放device端内存
   CHECK_CUDA(cudaFree(d_src_y));
   CHECK_CUDA(cudaFree(d_src_u));
   CHECK_CUDA(cudaFree(d_src_v));
-  CHECK_CUDA(cudaFree(d_dst_y));
-  CHECK_CUDA(cudaFree(d_dst_u));
-  CHECK_CUDA(cudaFree(d_dst_v));
+  CHECK_CUDA(cudaFree(d_src_rgb));
+  CHECK_CUDA(cudaFree(d_dst_rgb));
 }
 
 void npp_crop_example() {
