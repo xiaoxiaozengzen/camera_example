@@ -1,6 +1,3 @@
-#include <bits/c++config.h>
-#include <bits/stdint-intn.h>
-#include <bits/stdint-uintn.h>
 #include <iostream>
 #include <string>
 #include <sys/types.h>

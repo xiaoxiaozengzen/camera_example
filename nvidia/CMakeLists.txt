@@ -82,6 +82,9 @@ add_executable(undistort undistort/undistort.cu)
 target_include_directories(undistort PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 target_link_libraries(undistort PUBLIC CUDA::cudart)
 
+add_executable(stitch stitch/stitch.cu)
+target_include_directories(stitch PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+target_link_libraries(stitch PUBLIC CUDA::cudart)
 
 add_executable(cuda_graph cudagraph_example/cuda_graph.cu)
 target_include_directories(cuda_graph PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
