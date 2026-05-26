@@ -75,6 +75,7 @@ void cuda_memcpy_async() {
      * cudaHostAllocDefault：默认标志，表示分配的内存是页锁定的，可以用于异步数据传输
      * cudaHostAllocMapped：映射标志，表示分配的内存可以映射到设备地址空间，允许设备直接访问该内存
      *                      用于零拷贝访问（zero-copy access），适合小数据量低频访问场景
+     *                      频繁访问时性能较差，因为每次访问都需要通过PCIe总线进行数据传输
      * cudaHostAllocPortable：可移植标志，表示分配的内存可以在多个CUDA上下文中使用
      *
      * cudaMalloc跟cudaMallocAsync的区别：
@@ -87,6 +88,11 @@ void cuda_memcpy_async() {
      * 3.流有序性：
      *    cudaMalloc是全局同步的，所有流都会等待cudaMalloc完成后才能继续执行；
      *    cudaMallocAsync是流有序的，只有提交cudaMallocAsync的流会等待内存分配完成，其他流可以继续执行不受影响
+     *
+     * cudaHostAlloc跟cudaMallocHost的区别：
+     * 1. 内存类型：
+     *    cudaHostAlloc分配的是页锁定内存（pinned memory），适合用于异步数据传输；
+     *    cudaMallocHost分配的是页锁定内存（pinned memory），但不支持映射到设备地址空间
      */
     uint8_t* h_src = nullptr;
     uint8_t* h_dst = nullptr;
