@@ -109,6 +109,16 @@ void cuda_stream_event() {
     cudaEventCreate(&event1);
     cudaEventCreate(&event1_stop);
 
+    cudaEvent_t event_with_flag;
+    /**
+     * @brief 使用给定的flag创建event
+     * - cudaEventDefault：等待改event的时候(调用cudaEventSynchronize/cudaStreamWaitEvent)时CPU采用忙等待，会消耗CPU
+     * - cudaEventBlockingSync：等待改event的时候(调用cudaEventSynchronize/cudaStreamWaitEvent)时会挂起让出CPU，延迟略高，但是省CPU
+     * - cudaEventDisableTiming：禁用计时功能。event不再用于计时。因此性能更好，可以只用于做流水同步
+     * - cudaEventInterprocess：创建跨进程可共享的event
+     */
+    cudaEventCreateWithFlags(&event_with_flag, cudaEventDisableTiming);
+
     unsigned int cudastream_flags = 0;
     /**
      * cudaStreamDefault：0，默认流标志，表示标准的流行为。
@@ -167,6 +177,7 @@ void cuda_stream_event() {
     delete[] h_data;
     cudaEventDestroy(event1);
     cudaEventDestroy(event1_stop);
+    cudaEventDestroy(event_with_flag);
     cudaStreamDestroy(stream1);
     cudaStreamDestroy(stream2);
 }
