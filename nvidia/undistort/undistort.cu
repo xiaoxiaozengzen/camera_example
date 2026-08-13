@@ -93,7 +93,7 @@ __device__ void __forceinline__ UndistortPoint(float& u_norm, float& v_norm, con
     float k4 = calib_param[7];
 
     // 基于OpenCV的畸变模型，将归一化坐标从理想(去畸变)映射到实际(有畸变)坐标的过程：
-    // 1.计算半径
+    // 1.计算半径,这是理想坐标到光轴的距离，r = sqrt(u_norm^2 + v_norm^2)
     float r = sqrt(u_norm * u_norm + v_norm * v_norm);
     // 2.计算极角：点与光轴的夹角
     float theta = atan(r);
@@ -102,11 +102,21 @@ __device__ void __forceinline__ UndistortPoint(float& u_norm, float& v_norm, con
     float theta4 = theta2 * theta2;
     float theta6 = theta4 * theta2;
     float theta8 = theta4 * theta4;
-    // 4.计算修正后的极角
-    float theta_d = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+    // 4.鱼眼实际成像的归一化半径
+    float r_d = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
     // 5.计算修正后的归一化坐标
-    u_norm = u_norm * (theta_d / r);
-    v_norm = v_norm * (theta_d / r);
+    // u_norm = r * cos(phi)    u_distorted = r_d * cos(phi)
+    // v_norm = r * sin(phi)    v_distorted = r_d * sin(phi)
+    // cos(phi) = u_norm / r, sin(phi) = v_norm / r
+    // u_distorted = r_d * cos(phi) = r_d * (u_norm / r) = u_norm * (r_d / r)
+    // v_distorted = r_d * sin(phi) = r_d * (v_norm / r) = v_norm * (r_d / r)
+    u_norm = u_norm * (r_d / r);
+    v_norm = v_norm * (r_d / r);
+
+    // 补充：对于60度入射的关线：
+    // 理论上有r = tan(theta) = tan(60°) = sqrt(3) ≈ 1.732
+    // 实际上r_d = theta_d = 1.05
+    // 实际上的成像被拉回了，符合鱼眼越靠近边缘，压缩越严重的规律
 }
 
 template<bool need_undistort>
