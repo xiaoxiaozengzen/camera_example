@@ -766,6 +766,145 @@ void resize() {
     std::cout << "Output NV12 image saved to: " << output_nv12_image_path << std::endl;
 }
 
+/*************************************** pinhole undistort ***************************************/
+
+void MapDstToSrc(double dst_u, double dst_v, const double* K, const double* D, double fov_scale, double& src_u, double& src_v) {
+    // 1. 将虚拟相机的目标像素坐标 -> 归一化坐标
+    double x_n = (dst_u - K[2]) / (K[0] / fov_scale);
+    double y_n = (dst_v - K[3]) / (K[1] / fov_scale);
+
+    // 2. 归一化坐标应用畸变模型，计算畸变后的归一化坐标
+    double r2 = x_n * x_n + y_n * y_n;
+    double rad = 1.0 + D[0] * r2 + D[1] * r2 * r2 + D[4] * r2 * r2 * r2; // 径向
+    double x_d = x_n * rad + 2.0 * D[2] * x_n * y_n + D[3] * (r2 + 2.0 * x_n * x_n); // +切向 = x畸变
+    double y_d = y_n * rad + D[2] * (r2 + 2.0 * y_n * y_n) + 2.0 * D[3] * x_n * y_n; // +切向 = y畸变
+
+    // 3. 将畸变后的归一化坐标 -> 源像素坐标
+    src_u = x_d * K[0] + K[2];
+    src_v = y_d * K[1] + K[3];
+}
+
+/**
+ * @brief 
+ * @param  plane            y或者uv平面的地址
+ * @param  stride           每行的字节数
+ * @param  bpp              一个像素的字节数，例如Y是1，UV平面是2
+ * @param  width            图片的宽度
+ * @param  height           图片的高度
+ * @param  u                像素点的x坐标，浮点数
+ * @param  v                像素点的y坐标，浮点数
+ * @param  channels         获取单个像素中的第几个通道的值，例如Y平面就是0，UV平面就是0或1
+ * @param  out              获取到的像素值
+ * @return true 
+ * @return false
+ *
+ * @note 双线性插值中，整数坐标=像素中心(例如当dx=dy=0，直接返回plane[x0,y0])，浮点坐标=像素中心+偏移量
+ */
+bool SampleBilinear(const uint8_t* plane, int stride, int bpp, int width, int height,
+                    double u, double v, int channels, uint8_t& out) {
+    if(u < 0 || u > width - 1.0 || v < 0 || v > height - 1.0) {
+        return false; // 超出图像范围
+    }
+
+    int x0 = static_cast<int>(u);
+    int y0 = static_cast<int>(v);
+    int x1 = (x0 + 1) < width ? x0 + 1 : x0;
+    int y1 = (y0 + 1) < height ? y0 + 1 : y0;
+    double dx = u - x0;
+    double dy = v - y0;
+
+    double p00 = plane[y0 * stride + x0 * bpp + channels];
+    double p10 = plane[y0 * stride + x1 * bpp + channels];
+    double p01 = plane[y1 * stride + x0 * bpp + channels];
+    double p11 = plane[y1 * stride + x1 * bpp + channels];
+    double top = p00 * (1 - dx) + p10 * dx; // 横向插值y0行
+    double bottom = p01 * (1 - dx) + p11 * dx; // 横向插值y1行
+    out = static_cast<uint8_t>(top * (1 - dy) + bottom * dy); // 纵向插值
+    return true;
+}
+
+void pinhole_undistort() {
+    std::string input_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/input/infrared_640_512_nv12.yuv";
+    const double K[4] = {742.425, 742.425, 316.808, 253.326}; // fx, fy, cx, cy
+    const double D[5] = {-0.303234, 0.053968, -0.001405, -0.000301, 0.0}; // k1, k2, p1, p2, k3
+    const double fov_scale = 1.0; // 视场缩放因子
+    int width = 640;
+    int height = 512;
+
+    // 1.读取输入图像数据
+    std::ifstream input_file(input_image_path, std::ios::binary|std::ios::ate);
+    if (!input_file.is_open()) {
+        std::cerr << "Failed to open input image file: " << input_image_path << std::endl;
+        return;
+    }
+    std::size_t file_size = input_file.tellg();
+    int expected_size = width * height * 3 / 2; // nv12格式
+    if (file_size != expected_size) {
+        std::cerr << "Input image file size does not match expected size: " << file_size << " vs " << expected_size << std::endl;
+        return;
+    }
+    input_file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> yuv_data(file_size);
+    input_file.read(reinterpret_cast<char*>(yuv_data.data()), file_size);
+    input_file.close();
+    std::cout << "Input image path: " << input_image_path << std::endl;
+    std::cout << "Input image size: " << file_size << " bytes" << std::endl;
+    
+    // 2. 获取Y平面和UV平面的指针
+    const uint8_t* y_plane = yuv_data.data();
+    const uint8_t* uv_plane = yuv_data.data() + width * height;
+    std::vector<uint8_t> undistorted_yuv_data(file_size, 128); // 输出图像数据
+    uint8_t* undistorted_y_plane = undistorted_yuv_data.data();
+    uint8_t* undistorted_uv_plane = undistorted_yuv_data.data() + width * height;
+
+    // 3.Y平面处理
+    for(int v = 0; v < height; ++v) {
+        for (int u = 0; u < width; ++u) {
+            double src_u, src_v;
+            MapDstToSrc(u, v, K, D, fov_scale, src_u, src_v);
+            uint8_t y_value;
+            if (SampleBilinear(y_plane, width, 1, width, height, src_u, src_v, 0, y_value)) {
+                undistorted_y_plane[v * width + u] = y_value;
+            } else {
+                undistorted_y_plane[v * width + u] = 128; // 超出范围的像素点设置为灰色
+            }
+        }
+    }
+
+    // 4.UV平面处理
+    // UV平面是版分辨率交错的，色度像素C覆盖了亮度像素的2c和2c+1列，这两列的像素中心分别在2uc，2uc+1
+    // 所以色素像素的采样点在亮度平面上是2uc+0.5。少了这个0.5就等于把色度采样点当成2x2左上角亮度像素的共位了，而不是块中心
+    // 反之亮度坐标转像素坐标 c=(y - 0.5)/2, r=(x - 0.5)/2，与上一步对应
+    for(int v = 0; v < height / 2; ++v) {
+        for (int u = 0; u < width / 2; ++u) {
+            double src_u, src_v;
+            MapDstToSrc(u * 2 + 0.5, v * 2 + 0.5, K, D, fov_scale, src_u, src_v); // UV平面采样点在Y平面中心
+            double src_u_uv = (src_u - 0.5) * 0.5; // 将Y平面坐标映射到UV平面坐标
+            double src_v_uv = (src_v - 0.5) * 0.5; // 将Y平面坐标映射到UV平面坐标
+            uint8_t u_value, v_value;
+            if (SampleBilinear(uv_plane, width, 2, width / 2, height / 2, src_u_uv, src_v_uv, 0, u_value) &&
+                SampleBilinear(uv_plane, width, 2, width / 2, height / 2, src_u_uv, src_v_uv, 1, v_value)) {
+                undistorted_uv_plane[v * width + u * 2 + 0] = u_value;
+                undistorted_uv_plane[v * width + u * 2 + 1] = v_value;
+            } else {
+                undistorted_uv_plane[v * width + u * 2 + 0] = 128; // 超出范围的像素点设置为灰色
+                undistorted_uv_plane[v * width + u * 2 + 1] = 128; // 超出范围的像素点设置为灰色
+            }
+        }
+    }
+
+    // 5.保存输出图像数据
+    std::string output_image_path = "/mnt/workspace/cgz_workspace/Exercise/camera_example/output/undistort_infrared_640_512_nv12.yuv";
+    std::ofstream output_file(output_image_path, std::ios::binary);
+    if (!output_file.is_open()) {
+        std::cerr << "Failed to open output image file: " << output_image_path << std::endl;
+        return;
+    }
+    output_file.write(reinterpret_cast<char*>(undistorted_yuv_data.data()), undistorted_yuv_data.size());
+    output_file.close();
+    std::cout << "Undistorted image saved to: " << output_image_path << std::endl;
+}
+
 int main() {
     std::cout << "=================== undistort ===================" << std::endl;
     undistort();
@@ -773,5 +912,8 @@ int main() {
     pixlate();
     std::cout << "=================== resize ===================" << std::endl;
     resize();
+    std::cout << "=================== pinhole undistort ===================" << std::endl;
+    pinhole_undistort();
+
     return 0;
 }
